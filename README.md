@@ -33,6 +33,16 @@ somewhere else. Windows builds are available as zips on the
 (`so skill install claude`), or add `--dir <path>` for other skill directories. Re-run it after
 upgrading `so` to refresh the skill.
 
+### Uninstall
+
+```bash
+so uninstall          # removes the skills, run history, and the so binary; keeps your config
+so uninstall --all    # also removes ~/.config/second-opinion
+```
+
+It lists what it will remove and asks before deleting (`--yes` skips the prompt). It doesn't
+track skills you installed elsewhere with `so skill install --dir`, so remove those yourself.
+
 ## Usage
 
 ```bash
