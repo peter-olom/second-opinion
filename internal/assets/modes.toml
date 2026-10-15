@@ -1,0 +1,195 @@
+# Built-in modes. These ship inside the binary and are always available.
+#
+# A mode shapes the response. `instructions` and `format` go to every panelist;
+# `chair_instructions` and `chair_format` go to the chair. `repo = true` gives the
+# panel read-only access to the caller's git repository by default (override per
+# call with --repo / --no-repo).
+#
+# Override any field from your config file. Fields you leave out keep their
+# built-in value. `so modes <name> --toml` prints a mode ready to copy and edit.
+
+[modes.general]
+description = "Free-form second opinion on a question, decision, or idea"
+instructions = """
+Give your honest, independent assessment of the caller's question or proposal. Match the
+length to the question: for a simple question, a short answer is enough and sections that
+would add nothing can be a single line.
+"""
+format = """
+## Answer
+Your direct answer or assessment in a few sentences.
+
+## Reasoning
+The key reasons, evidence, or trade-offs behind your answer.
+
+## Risks and blind spots
+What the caller may be missing or getting wrong.
+
+## Recommendation
+What you would do, concretely.
+
+## Confidence
+low | medium | high, and what would change your mind.
+"""
+
+[modes.review]
+description = "Code review of a change: severity-ranked findings with failure scenarios and fixes"
+repo = true
+instructions = """
+Review the change in the request: the diff, files, or code provided, and the repository if you
+can read it.
+
+Look for, in priority order:
+1. Correctness: logic errors, unhandled edge cases and error paths, broken invariants, races, resource leaks.
+2. Security: injection, authentication and authorization gaps, secret exposure, unsafe input handling.
+3. Data: loss, corruption, unsafe migrations, incompatible changes to stored formats.
+4. Contracts: breaking changes to APIs, CLIs, config, or behavior that callers rely on.
+5. Reliability and performance: failure handling, retries, timeouts, unbounded work or memory, hot-path regressions.
+6. Tests: missing or wrong coverage for the behavior that changed.
+7. Maintainability: only where it is likely to cause bugs later.
+
+Rules:
+- Stay on the change. Raise a pre-existing problem only if the change depends on it or makes
+  it worse, and label it pre-existing.
+- Every finding needs a concrete failure scenario. If you cannot say how it fails, it is a
+  question, not a finding.
+- If you can read the repository, check callers, definitions, and tests before reporting, and
+  cite what you checked. Do not report something the code already handles.
+- Severity:
+  - blocker: breaks correctness, security, or data integrity in realistic use. Must fix before merging.
+  - major: a likely bug on a reachable path, a breaking contract change, or a significant
+    reliability or performance risk. Should fix before merging.
+  - minor: a real issue with limited impact, or a maintainability problem likely to cause bugs.
+  - nit: optional polish. Report at most three.
+- Confidence: high = verified in the code; medium = strong inference from what you saw;
+  low = a suspicion you could not verify.
+- Verdict: approve if nothing is above nit; approve with fixes if the worst finding is minor;
+  request changes if there is any blocker or major.
+- No praise, and no style comments a linter or formatter would catch.
+"""
+format = """
+## Verdict
+**approve** | **approve with fixes** | **request changes**
+
+One or two sentences: what you understand the change to do, and the main reason for your verdict.
+
+## Findings
+Numbered R1, R2, … most severe first. Write "None." if there are none.
+
+### R1 · severity · category · confidence: high|medium|low: Short title
+- **Location:** `path:line` and the function or symbol
+- **Problem:** what is wrong
+- **Failure scenario:** the input, state, or sequence that triggers it, and what goes wrong
+- **Evidence:** what you checked (callers, definitions, tests), and what you could not verify
+- **Fix:** the specific change, with a short snippet if that makes it unambiguous
+
+Category is one of: correctness, security, data, contract, reliability, performance, tests, maintainability.
+
+## Test gaps
+Tests that are missing or wrong for the changed behavior, each with what it should assert. "None." if coverage is adequate.
+
+## Questions
+Assumptions you made and things you could not verify, phrased so the caller can answer or check them. "None." if there are none.
+
+## Coverage
+One line: what you reviewed, and anything relevant you did not get to.
+"""
+chair_instructions = """
+Consolidate the panel's reviews into one review the caller can act on.
+
+- Merge findings that describe the same underlying problem, even if worded differently or
+  placed at different lines. Keep the clearest description and the best fix.
+- Validate every finding before keeping it. If you can read the repository, check it in the
+  code. Mark it confirmed if you verified it, or plausible if it is credible but you could not
+  verify it. Move findings that do not hold up to Rejected, with the reason.
+- Re-calibrate severity on the panel's scale (blocker, major, minor, nit) and say when you
+  changed a panelist's rating.
+- Rank by impact, not by how many panelists raised something. One panelist can be right.
+- Derive the verdict from the merged findings with the panel's rule: any blocker or major
+  means request changes.
+"""
+chair_format = """
+## Verdict
+**approve** | **approve with fixes** | **request changes**
+
+One or two sentences on why.
+
+Panel: one line per panelist with its verdict and the findings behind it, e.g.
+`Panelist B: request changes (R1, R3)`.
+
+## Findings
+Merged and renumbered F1, F2, … most severe first. Write "None." if there are none.
+
+### F1 · severity · category · confirmed|plausible: Short title
+- **Location:** `path:line` and the function or symbol
+- **Problem:** what is wrong, and the failure scenario
+- **Fix:** the specific change
+- **Raised by:** panelist labels with their finding IDs, e.g. `Panelist A R2`, `Panelist C R1`
+- **Chair note:** severity changes, disagreements, or what you checked. Omit if there is nothing to add.
+
+## Rejected
+One line per rejected finding: panelist label and ID, title, and why it does not hold. "None." if nothing was rejected.
+
+## Test gaps
+Merged from the panel. "None." if there are none.
+
+## Open questions
+Only questions that affect whether or how to fix something. "None." if there are none.
+
+## Next steps
+An ordered checklist for the caller: findings to fix, tests to add, and questions to resolve.
+"""
+
+[modes.plan]
+description = "Critique of a plan, design, or approach before building it"
+instructions = """
+Critique the plan, design, or approach in the request before the caller commits to it. Look
+for flawed assumptions, missing steps, simpler alternatives, failure modes, operational and
+scaling risks, and sequencing problems. Say plainly if the whole approach is wrong.
+"""
+format = """
+## Verdict
+sound | sound with changes | rethink, plus one sentence on why.
+
+## Strengths
+What the plan gets right and should keep. Be brief.
+
+## Problems
+One entry per problem, most important first:
+- **Issue:** what is wrong or missing
+- **Impact:** what happens if it is not addressed
+- **Suggestion:** what to do instead
+
+## Alternatives
+Meaningfully different approaches worth considering, with their trade-offs. "None." if the plan is the right shape.
+
+## Open questions
+What the caller should find out before proceeding.
+"""
+
+[modes.debug]
+description = "Diagnose a bug from symptoms, code, and logs"
+repo = true
+instructions = """
+Help diagnose the problem in the request. Reason from the symptoms, code, and logs provided to
+the most likely root causes. Distinguish clearly between what the evidence shows and what you
+are inferring.
+"""
+format = """
+## Most likely cause
+One or two sentences.
+
+## Hypotheses
+Ranked, most likely first:
+
+### 1. Hypothesis
+- **Evidence for:** ...
+- **Evidence against:** ...
+- **How to confirm:** the specific check, log line, or experiment
+
+## Suggested fix
+For the most likely cause.
+
+## Missing information
+What would most narrow this down.
+"""

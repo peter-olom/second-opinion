@@ -1,0 +1,172 @@
+---
+name: second-opinion
+description: Get independent second opinions from other AI models (Claude, GPT via Codex, other providers via pi) with the `so` CLI. Use when the user asks for a second opinion, a panel, or another model's take, or before a high-stakes or hard-to-reverse decision where an outside check on a plan, code review, or debugging theory is worth a few minutes. Also use when `so` reports that no profiles are configured, or when the user wants to set up or change their second-opinion profiles.
+---
+
+# Second opinions with `so`
+
+`so ask` sends your prompt to the models in a **profile** and prints their answers. Profiles with
+several models (panels) also return a **chair's synthesis** that merges and weighs the answers.
+A **mode** shapes the response format.
+
+`so` ships with modes but **no profiles**, because the right models depend on which CLIs and
+subscriptions the user has. If `so profiles` or `so ask` reports that no profiles are configured,
+go through [First run: set up profiles](#first-run-set-up-profiles) with the user before
+anything else.
+
+## What panelists can and cannot see
+
+Panelists **never see this conversation**. They see your prompt, anything you attach, and, if the
+panel has repository access, the code in the repository.
+
+- **Your prompt.** Always state the goal, the specific question, the constraints, what you have
+  tried, and your current view, and ask them to challenge it rather than confirm it.
+- **`--diff` / `--base <ref>`.** Attaches the git diff plus the full current contents of every
+  changed and untracked file. `--diff` alone covers uncommitted changes. `--base main` covers
+  everything on this branch since it left `main`.
+- **`-f <file>` and stdin.** Attach specific files, logs, or output.
+- **Repository access.** Panelists can read the current git repository with read-only tools, so they
+  can open callers, definitions, and tests. The `review` and `debug` modes turn this on
+  automatically inside a git repo. For other modes, use `--repo` to turn it on, and `--no-repo` to
+  turn it off in any mode. Repository access does not replace a good prompt. Point them at what
+  matters, because they will not guess what you changed or why.
+
+## Usage
+
+```bash
+so profiles                      # list profiles (models/effort per profile)
+so modes                         # list modes (response formats)
+
+so ask -p <profile> -m <mode> "<prompt>"
+
+# Long prompts: use a quoted heredoc
+so ask -p panel -m plan <<'EOF'
+We need to ... Here is the plan: ...
+What are we missing?
+EOF
+
+# Review this branch's work (diff + changed files attached, repo readable)
+so ask -p panel -m review --base main "Review this change. It adds ... Constraints: ..."
+
+# Review uncommitted changes
+so ask -m review --diff "I refactored the retry logic in ... Is it correct?"
+
+# Debug with logs attached; the panel can read the code itself
+so ask -m debug -f logs/crash.txt "Worker deadlocks under load after the change to queue.go. Why?"
+```
+
+Options: `-p/--profile`, `-m/--mode`, `--diff`, `--base <ref>`, `--repo`, `--no-repo`,
+`-f/--file` (repeatable), `-w/--with backend:model@effort` (ad-hoc panelists instead of a profile,
+repeatable), `--no-chair`, `--reveal`, `--format md|json`, `--timeout 20m`.
+
+Modes: `general` (default), `review` (code review), `plan` (design critique), `debug` (diagnosis).
+Run `so modes` for the current list, which may include user-defined modes.
+
+## Practicalities
+
+- A call takes from about 10 seconds to several minutes. High-effort panels with repository
+  access are the slowest. Give the command a long timeout (at least 15 minutes) and do not
+  start it again while it is still running.
+- The answer is markdown on stdout. Progress and errors go to stderr.
+- If one panelist fails, the others still return. The exit code is non-zero only if every panelist
+  failed. Each failure shows a kind and a suggested fix:
+  - `quota`: a usage or rate limit was hit. A configured `fallback` is tried automatically.
+    Otherwise, retry later or suggest that the user add a fallback.
+  - `auth`: the CLI is not signed in. Ask the user to sign in; don't do it for them.
+  - `model`: the model is unknown or retired. Offer to update the profile, and test the
+    replacement with `so doctor --with`.
+  - `timeout`: retry with a longer `--timeout` or lower effort.
+- `so` refuses to run from inside a panelist, so panels cannot recurse.
+
+## Using the answer
+
+- Panels are anonymous. Each run assigns the labels `Panelist A`, `B`, … at random, so you cannot
+  tell which model said what, and neither can the chair. Judge each response on its reasoning and
+  evidence, and don't try to work out who wrote it.
+- Every answer starts with a run ID, and each run is kept locally for 7 days. If the user asks which
+  model said what, run `so runs show <id> --reveal`. Don't unblind a panel otherwise. `so runs`
+  lists recent runs, and `so runs show <id> --prompt` shows exactly what the panel was sent.
+- Weigh the answer, don't just follow it. Panelists lack your context and can be confidently
+  wrong. Check their claims against the actual code before acting.
+- Tell the user what the panel said, where you agree or disagree and why, and what you will do now.
+
+## First run: set up profiles
+
+Set up profiles **with** the user. Profiles decide whose subscriptions and money each call
+spends, so propose a setup and get the user's approval before you write anything.
+
+### 1. Take stock of what is installed
+
+Run `so doctor` to see which backend CLIs are installed. For each installed backend, check that
+it is signed in and find the models it can use:
+
+| backend | signed in? | models |
+|---|---|---|
+| `claude` (Claude Code) | `claude auth status`: `loggedIn`, and `authMethod` shows whether it uses a subscription or a metered API key | The aliases listed under `--model` in `claude --help`, such as `opus` (strongest) and `sonnet` (faster). Aliases always point to the latest model, so prefer them to pinned IDs. |
+| `codex` (Codex CLI) | `codex login status` | `codex debug models` prints the catalog as JSON. Use entries with `"visibility": "list"`. Each entry lists its `supported_reasoning_levels`. The user's current model is `model` in `~/.codex/config.toml`. |
+| `pi` | `pi --list-models` lists models only for providers it has credentials for. `pi auth check --provider <name>` checks one provider. | Use the `provider/model` IDs from `pi --list-models`, such as `ollama/glm-5.3:cloud`. pi's own default is `defaultProvider`/`defaultModel` in `~/.pi/agent/settings.json`. |
+
+If a CLI is installed but not signed in, tell the user rather than fixing it yourself.
+
+### 2. Ask the user a few questions
+
+- Which of the signed-in CLIs should `so` use? Some may be there for other reasons, or run on a
+  metered API key.
+- What matters more for everyday second opinions: speed and cost, or depth?
+- Are there models they especially trust or want to avoid?
+
+### 3. Recommend profiles
+
+Some principles:
+
+- **Diversity is the point.** A second opinion is most useful from a different model family than
+  the one asking. Build panels from different providers, not several models from one family.
+- **Keep the set small.** A typical setup:
+  - `quick`: one fast model at `medium` effort, from a different provider than the user's main
+    agent. Make it `default_profile`.
+  - `panel`: the strongest model from each of two or three providers at `high` effort, with a
+    `chair`. The chair should be the strongest model available, because it checks the panel's
+    claims. Only propose this if at least two providers are available.
+  - Optionally, one single-model profile per provider (for example `claude`, `codex`) for asking a
+    specific model.
+- **Effort:** `low` or `medium` for quick checks, `high` for panels. `xhigh` and `max` are much
+  slower and costlier, so only use them if the user asks.
+- **Avoid pinning when you can.** Use aliases (Claude), or leave `model` out to use the CLI's
+  current default. Pinned IDs eventually get retired. Open-model providers retire models often.
+- **Fallbacks for limits.** If the user often hits a subscription's usage limits, give that
+  panelist a `fallback` list. Fallbacks are tried in order when it hits a usage or rate limit, so
+  use models from another provider, for example
+  `{ backend = "codex", model = "...", effort = "high", fallback = [{ backend = "pi", model = "...", effort = "high" }] }`.
+
+Show the proposal as TOML and wait for approval:
+
+```toml
+default_profile = "quick"
+
+[profiles.quick]
+description = "One fast opinion from a different model family"
+panelists = [{ backend = "codex", model = "<codex model>", effort = "medium" }]
+
+[profiles.panel]
+description = "Strongest model from each provider, chaired by the strongest"
+panelists = [
+  { backend = "claude", model = "opus", effort = "high" },
+  { backend = "codex", model = "<codex model>", effort = "high" },
+  { backend = "pi", model = "<provider/model>", effort = "high" },
+]
+chair = { backend = "claude", model = "opus", effort = "high" }
+```
+
+### 4. Write and verify
+
+1. Before writing, check that the candidate models answer:
+   `so doctor --with claude:opus@high --with codex:<model>@high --with pi:<provider/model>@high`.
+   Swap out any model that fails.
+2. If the config does not exist yet, run `so init`. It prints the config path and creates a
+   commented starter file. Add the approved profiles to it. If the config already exists, edit it
+   and keep what the user already has.
+3. Run `so profiles` to validate the config, then `so doctor --ping` to check every configured
+   model end to end.
+4. Tell the user what you set up, and that they can change it later by asking you or by editing the
+   config file.
+

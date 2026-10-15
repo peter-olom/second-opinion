@@ -1,0 +1,85 @@
+# second-opinion configuration
+#
+# so ships no profiles: which models you can use depends on the CLIs and
+# subscriptions you have. Add your own below. The second-opinion agent skill can
+# take stock of your setup and propose profiles (`so skill` prints it).
+#
+# Panelists are written as { backend, model, effort }:
+#   backend: claude | codex | pi
+#   model:   whatever the backend CLI accepts, e.g. "opus" (claude), "gpt-6.1-sol" (codex),
+#            "ollama/glm-5.3:cloud" (pi). Leave it out to use the CLI's own default model.
+#   effort:  low | medium | high | xhigh | max (also off/minimal for pi), passed to the CLI's
+#            effort or thinking setting.
+#
+# Profiles with more than one panelist can name a chair, which synthesizes the panel's answers.
+
+default_mode = "general"
+timeout = "15m"
+
+# Panels are anonymous: panelists are labelled Panelist A, B, … at random for each run, so neither
+# the chair nor the caller knows which model said what. `so ask --reveal` appends a key afterwards.
+# anonymize = true
+
+# Every run is recorded privately in ~/.local/state/second-opinion/runs (including which model was
+# which panelist), so you can inspect it later with `so runs`. Runs older than history_days are
+# pruned automatically.
+# history = true
+# history_days = 7
+
+# Profile used when `so ask` is run without --profile. Optional if you have only one profile.
+# default_profile = "quick"
+
+# Chair for ad-hoc panels built with `so ask --with ... --with ...`.
+# default_chair = { backend = "claude", model = "opus", effort = "high" }
+
+# Override the command or append extra arguments/environment for a backend:
+# [backends.codex]
+# command = "/opt/homebrew/bin/codex"
+# args = ["-c", "service_tier=\"flex\""]
+# env = { CODEX_HOME = "/Users/me/.codex" }
+
+# ---------------------------------------------------------------- profiles
+#
+# [profiles.quick]
+# description = "One fast opinion"
+# panelists = [{ backend = "claude", model = "sonnet", effort = "medium" }]
+#
+# [profiles.panel]
+# description = "Models from different providers, chaired by the strongest"
+# panelists = [
+#   { backend = "claude", model = "opus", effort = "high" },
+#   { backend = "codex", model = "gpt-6.1-sol", effort = "high" },
+#   { backend = "pi", model = "ollama/glm-5.3:cloud", effort = "high" },
+# ]
+# chair = { backend = "claude", model = "opus", effort = "high" }
+# mode = "review"   # optional: this profile's default mode
+#
+# A panelist (or chair) can list fallbacks, tried in order when it hits a usage or rate limit:
+#   { backend = "codex", model = "gpt-6.1-sol", effort = "high",
+#     fallback = [{ backend = "pi", model = "ollama/glm-5.3:cloud", effort = "high" }] }
+
+# ------------------------------------------------------------------- modes
+#
+# Built-in modes (general, review, plan, debug) ship with so and update with it.
+# To customise one, override only the fields you want to change. The rest keep
+# their built-in values. `so modes` lists modes, `so modes review` shows the
+# exact prompts, and `so modes review --toml` prints the mode to copy here.
+#
+# [modes.review]
+# format = """
+# ## Verdict
+# ...
+# """
+#
+# Define your own modes the same way:
+#
+# [modes.security]
+# description = "Security audit of a change"
+# repo = true
+# instructions = """
+# Audit the change for injection, authn/authz gaps, secret handling, and unsafe deserialization.
+# """
+# format = """
+# ## Risk
+# ...
+# """
