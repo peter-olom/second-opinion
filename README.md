@@ -36,12 +36,26 @@ upgrading `so` to refresh the skill.
 ### Uninstall
 
 ```bash
-so uninstall          # removes the skills, run history, and the so binary; keeps your config
-so uninstall --all    # also removes ~/.config/second-opinion
+so uninstall          # removes the skill files, run history, and the so binary; keeps your config
+so uninstall --all    # also removes the config file in use (--config or $SECOND_OPINION_CONFIG)
 ```
 
-It lists what it will remove and asks before deleting (`--yes` skips the prompt). It doesn't
-track skills you installed elsewhere with `so skill install --dir`, so remove those yourself.
+It lists what it will remove and asks before deleting (`--yes` skips the prompt). Some details:
+
+- It deletes only files `so` created: each `SKILL.md`, the `runs/*.json` files, the binary, and
+  with `--all` the config file. Folders are removed only if that leaves them empty. Anything you
+  added stays, and so does a config that shares a folder with the history.
+- It leaves symlinked folders alone. To be safe, with `--all` it also keeps the config's folder (even
+  if empty) when the config path is relative, contains `.` or `..`, or goes through a symlink.
+- If you run `so` through a symlink, only the link is removed. The file it points to stays. If it
+  can't prove which file you ran, it leaves the binary in place and tells you.
+- On Windows a running program can't delete itself, so the binary is renamed to `so.exe.old` for
+  you to delete afterwards.
+- If any path or folder can't be inspected, it stops before deleting anything.
+- On Windows, if `so.exe.old` already exists it uses `so.exe.old.1`, and so on, rather than
+  overwriting it.
+- It doesn't track skills you installed elsewhere with `so skill install --dir`, so remove those
+  yourself. It also tells you if another `so` is still on your PATH.
 
 ## Usage
 
@@ -249,8 +263,9 @@ make test       # go vet + go test
 make snapshot   # build all release archives into dist/ without publishing (needs goreleaser)
 ```
 
-CI runs `make test` and `make build` on Linux and macOS for every push and pull request, plus a
-snapshot build to keep the release config working. To release, push a tag:
+CI runs `make test` (with the race detector) and `make build` on Linux and macOS for every push
+and pull request. A Windows job runs `go vet`, builds `so`, and runs the Windows-specific path and
+uninstall tests. A snapshot build keeps the release config working. To release, push a tag:
 
 ```bash
 git tag v0.1.0 && git push origin v0.1.0

@@ -115,12 +115,13 @@ type Config struct {
 	Customized map[string]bool `toml:"-"`
 }
 
-// DefaultPath returns $SECOND_OPINION_CONFIG, or config.toml under the XDG config directory.
+// DefaultPath returns $SECOND_OPINION_CONFIG, or config.toml under the XDG
+// config directory. A relative XDG_CONFIG_HOME is ignored, as the XDG spec requires.
 func DefaultPath() string {
 	if p := os.Getenv("SECOND_OPINION_CONFIG"); p != "" {
 		return p
 	}
-	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
+	if x := os.Getenv("XDG_CONFIG_HOME"); filepath.IsAbs(x) {
 		return filepath.Join(x, "second-opinion", "config.toml")
 	}
 	home, err := os.UserHomeDir()

@@ -186,3 +186,18 @@ func TestLoadRejectsUnknownKeys(t *testing.T) {
 		t.Errorf("err = %v, want unknown key error", err)
 	}
 }
+
+func TestDefaultPathIgnoresRelativeXDG(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("SECOND_OPINION_CONFIG", "")
+	t.Setenv("XDG_CONFIG_HOME", ".")
+	if got, want := DefaultPath(), filepath.Join(home, ".config/second-opinion/config.toml"); got != want {
+		t.Errorf("relative XDG_CONFIG_HOME: DefaultPath() = %q, want %q", got, want)
+	}
+	t.Setenv("XDG_CONFIG_HOME", "/etc/xdg")
+	if got := DefaultPath(); got != "/etc/xdg/second-opinion/config.toml" {
+		t.Errorf("absolute XDG_CONFIG_HOME: DefaultPath() = %q", got)
+	}
+}

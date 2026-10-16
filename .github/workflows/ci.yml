@@ -22,6 +22,21 @@ jobs:
       - run: make test
       - run: make build
 
+  # The full suite relies on POSIX shells, permissions and symlinks. On Windows,
+  # check that everything builds and run the Windows path-resolution tests
+  # natively, plus the rename logic used to move a running so.exe aside (these
+  # rename an ordinary file; they do not start a real so.exe).
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go build ./cmd/so
+      - run: go test ./cmd/so -run "TestResolveConfigPathKeepsDriveRoot|TestResolveConfigPathRootedWithoutDrive|TestUninstallMovesRunningBinaryAsideOnWindows|TestUninstallNeverOverwritesOldBinaryOnWindows" -v
+
   snapshot:
     runs-on: ubuntu-latest
     steps:

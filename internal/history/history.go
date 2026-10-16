@@ -28,17 +28,26 @@ type Record struct {
 	Result         panel.Result `json:"result"` // with model identities
 }
 
-// Dir is where runs are stored: $XDG_STATE_HOME/second-opinion/runs, or
-// ~/.local/state/second-opinion/runs.
-func Dir() string {
-	if x := os.Getenv("XDG_STATE_HOME"); x != "" {
-		return filepath.Join(x, "second-opinion", "runs")
+// StateDir is so's state directory: $XDG_STATE_HOME/second-opinion, or
+// ~/.local/state/second-opinion. A relative XDG_STATE_HOME is ignored, as the
+// XDG spec requires. It is "" if no home directory can be found.
+func StateDir() string {
+	if x := os.Getenv("XDG_STATE_HOME"); filepath.IsAbs(x) {
+		return filepath.Join(x, "second-opinion")
 	}
 	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(".local", "state", "second-opinion", "runs")
+	if err != nil || !filepath.IsAbs(home) {
+		return ""
 	}
-	return filepath.Join(home, ".local", "state", "second-opinion", "runs")
+	return filepath.Join(home, ".local", "state", "second-opinion")
+}
+
+// Dir is where runs are stored: StateDir()/runs, or "" if there is no state directory.
+func Dir() string {
+	if s := StateDir(); s != "" {
+		return filepath.Join(s, "runs")
+	}
+	return ""
 }
 
 const idTimeLayout = "20060102-150405"
@@ -52,6 +61,9 @@ func NewID(t time.Time) string {
 
 // Save writes the record privately, then prunes runs older than maxAge.
 func Save(dir string, r Record, maxAge time.Duration) error {
+	if dir == "" {
+		return errors.New("no home directory for the run history")
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}

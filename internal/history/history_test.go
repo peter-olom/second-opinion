@@ -116,3 +116,19 @@ func slicesContains(ss []string, s string) bool {
 	}
 	return false
 }
+
+func TestStateDirIgnoresRelativeXDG(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	for _, x := range []string{".", "state", "~/state"} {
+		t.Setenv("XDG_STATE_HOME", x)
+		if got, want := StateDir(), filepath.Join(home, ".local/state/second-opinion"); got != want {
+			t.Errorf("XDG_STATE_HOME=%q: StateDir() = %q, want %q", x, got, want)
+		}
+	}
+	t.Setenv("XDG_STATE_HOME", "/srv/state")
+	if got := Dir(); got != "/srv/state/second-opinion/runs" {
+		t.Errorf("absolute XDG_STATE_HOME: Dir() = %q", got)
+	}
+}

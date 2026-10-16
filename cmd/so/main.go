@@ -73,7 +73,7 @@ func run(ctx context.Context, args []string) int {
 	case "init":
 		return cmdInit(rest)
 	case "uninstall":
-		return cmdUninstall(rest)
+		return cmdUninstall(ctx, rest)
 	case "skill":
 		return cmdSkill(rest)
 	case "version", "--version":
@@ -653,8 +653,12 @@ func cmdRuns(args []string) int {
 	fs := pflag.NewFlagSet("runs", pflag.ContinueOnError)
 	n := fs.IntP("limit", "n", 20, "how many runs to list")
 	fs.Usage = func() {
+		where := "Runs are not recorded: no home directory was found."
+		if d := history.Dir(); d != "" {
+			where = "Runs are recorded in " + d + "."
+		}
 		fmt.Fprintf(os.Stderr, "Usage: so runs [-n count]\n       so runs show <id|last> [--reveal] [--prompt] [--json]\n\n"+
-			"Runs are recorded in %s.\n\nFlags:\n%s", history.Dir(), fs.FlagUsages())
+			"%s\n\nFlags:\n%s", where, fs.FlagUsages())
 	}
 	if code, ok := parse(fs, args); !ok {
 		return code
@@ -718,104 +722,6 @@ func cmdRunsShow(args []string) int {
 		return fail(err)
 	}
 	return 0
-}
-
-// executable locates the running binary. Tests replace it.
-var executable = os.Executable
-
-func cmdUninstall(args []string) int {
-	fs, cfgPath := newFlagSet("uninstall", "so uninstall [--all] [--yes]\n\n"+
-		"Removes the skills installed by `so skill install`, the run history, and the so binary.\n"+
-		"Your config (profiles and mode overrides) is kept unless you pass --all.")
-	all := fs.Bool("all", false, "also remove your config")
-	yes := fs.BoolP("yes", "y", false, "do not ask for confirmation")
-	if code, ok := parse(fs, args); !ok {
-		return code
-	}
-	if os.Getenv(backend.EnvGuard) != "" {
-		fmt.Fprintln(os.Stderr, "so: refusing to uninstall from inside a second-opinion panelist.")
-		return 3
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fail(err)
-	}
-
-	type item struct{ what, path string }
-	var items []item
-	exists := func(p string) bool {
-		_, err := os.Lstat(p)
-		return err == nil
-	}
-	for _, s := range skillDirs {
-		if p := filepath.Join(home, s.dir, "second-opinion"); exists(p) {
-			items = append(items, item{s.harness + " skill", p})
-		}
-	}
-	if state := filepath.Dir(history.Dir()); exists(state) {
-		items = append(items, item{"run history", state})
-	}
-	if *all && exists(*cfgPath) {
-		items = append(items, item{"config", *cfgPath})
-	}
-	// The binary goes last, and only if it really is so (not, say, a test binary).
-	if exe, err := executable(); err == nil {
-		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
-			exe = resolved
-		}
-		if name := filepath.Base(exe); name == "so" || name == "so.exe" {
-			items = append(items, item{"binary", exe})
-		}
-	}
-
-	if len(items) == 0 {
-		fmt.Println("nothing to remove")
-		return 0
-	}
-	fmt.Println("This removes:")
-	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	for _, it := range items {
-		fmt.Fprintf(tw, "  %s\t%s\n", it.what, it.path)
-	}
-	tw.Flush()
-	if !*all && exists(*cfgPath) {
-		fmt.Printf("Your config stays at %s (use --all to remove it too).\n", *cfgPath)
-	}
-	if !*yes {
-		fmt.Print("Continue? [y/N] ")
-		var answer string
-		if _, err := fmt.Scanln(&answer); errors.Is(err, io.EOF) {
-			fmt.Println()
-			return fail(errors.New("no confirmation received; re-run with --yes to remove these"))
-		}
-		if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
-			fmt.Println("cancelled; nothing was removed")
-			return 1
-		}
-	}
-
-	code := 0
-	for _, it := range items {
-		var err error
-		switch it.what {
-		case "config", "binary":
-			err = os.Remove(it.path)
-		default:
-			err = os.RemoveAll(it.path)
-		}
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "so: could not remove %s: %v\n", it.path, err)
-			code = 1
-			continue
-		}
-		fmt.Println("removed", it.path)
-		// Tidy the config directory if removing the config emptied it.
-		if dir := filepath.Dir(it.path); it.what == "config" && filepath.Base(dir) == "second-opinion" {
-			os.Remove(dir)
-		}
-	}
-	fmt.Println("Skills installed elsewhere with `so skill install --dir` are not tracked; remove those yourself.")
-	return code
 }
 
 func cmdInit(args []string) int {
