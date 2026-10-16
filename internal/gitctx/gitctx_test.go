@@ -260,7 +260,7 @@ func TestDiffSkipsGitCryptPlaintext(t *testing.T) {
 			t.Errorf("filtered file content %s was sent:\n%s", secret, ctx.Text)
 		}
 	}
-	if !strings.Contains(ctx.Text, "secrets.env (git filter or diff driver; may be encrypted)") {
+	if !strings.Contains(ctx.Text, "secrets.env (git filter; may be encrypted)") {
 		t.Errorf("filtered file should be listed:\n%s", ctx.Text)
 	}
 	if !strings.Contains(ctx.Text, "return 3") {
@@ -372,7 +372,11 @@ func TestDropFiles(t *testing.T) {
 		"diff --git garbage header\n+UNPARSEABLE\n" +
 		"diff --git a/also-keep.go b/also-keep.go\n+also\n" +
 		"diff --git \"a/keep \\\"quoted\\\".go\" \"b/keep \\\"quoted\\\".go\"\n+QUOTED-KEPT\n"
-	got := dropFiles(diff, map[string]bool{"drop me.txt": true, `we"ird.txt`: true})
+	checked := map[string]bool{"keep.go": true, "drop me.txt": true, `we"ird.txt`: true, "also-keep.go": true, `keep "quoted".go`: true}
+	got, unparsed := dropFiles(diff, checked, map[string]bool{"drop me.txt": true, `we"ird.txt`: true})
+	if unparsed != 1 {
+		t.Errorf("unparsed = %d, want 1 (the garbage header)", unparsed)
+	}
 	for _, gone := range []string{"DROPPED", "QUOTED-DROPPED", "UNPARSEABLE"} {
 		if strings.Contains(got, gone) {
 			t.Errorf("%s should have been dropped:\n%s", gone, got)
@@ -394,5 +398,101 @@ func TestDiffFailsClosedOnTooManyPaths(t *testing.T) {
 	}
 	if _, err := Diff(context.Background(), dir, "HEAD"); err == nil || !strings.Contains(err.Error(), "too many changed files") {
 		t.Errorf("err = %v, want a refusal rather than a partial check", err)
+	}
+}
+
+// filteredRepo has a git filter on *.secret, one changed secret and one changed ordinary file.
+func filteredRepo(t *testing.T) string {
+	t.Helper()
+	dir := newRepo(t)
+	run(t, dir, "config", "filter.crypt.clean", "cat")
+	run(t, dir, "config", "filter.crypt.smudge", "cat")
+	write(t, dir, ".gitattributes", "*.secret filter=crypt\n")
+	write(t, dir, "db.secret", "PASSWORD=old\n")
+	run(t, dir, "add", ".")
+	run(t, dir, "commit", "-q", "-m", "secret")
+	write(t, dir, "db.secret", "PASSWORD=FILTERED-SECRET\n")
+	write(t, dir, "a.go", "package a\n\nfunc A() int { return 3 }\n")
+	return dir
+}
+
+func TestDiffSurvivesCustomPrefixes(t *testing.T) {
+	for _, cfg := range [][2]string{{"diff.mnemonicPrefix", "true"}, {"diff.noprefix", "true"}} {
+		for _, withUntracked := range []bool{false, true} {
+			dir := filteredRepo(t)
+			run(t, dir, "config", cfg[0], cfg[1])
+			if withUntracked {
+				write(t, dir, "new.txt", "new\n")
+			}
+			ctx, err := Diff(context.Background(), dir, "HEAD")
+			if err != nil {
+				t.Fatalf("%s: %v", cfg[0], err)
+			}
+			diff := ctx.Text[:strings.Index(ctx.Text, "</git-diff>")]
+			if !strings.Contains(diff, "return 3") {
+				t.Errorf("%s (untracked=%v): the ordinary change was lost:\n%s", cfg[0], withUntracked, ctx.Text)
+			}
+			if strings.Contains(ctx.Text, "FILTERED-SECRET") {
+				t.Errorf("%s: filtered content was sent", cfg[0])
+			}
+		}
+	}
+}
+
+func TestDiffWhenOnlyFilteredFilesChanged(t *testing.T) {
+	dir := filteredRepo(t)
+	run(t, dir, "checkout", "--", "a.go") // only the filtered file is changed now
+	ctx, err := Diff(context.Background(), dir, "HEAD")
+	if err != nil {
+		t.Fatalf("a change to a filtered file is still a change, not %v", err)
+	}
+	if !strings.Contains(ctx.Text, "db.secret (git filter; may be encrypted)") || strings.Contains(ctx.Text, "FILTERED-SECRET") {
+		t.Errorf("filtered file should be listed, not sent:\n%s", ctx.Text)
+	}
+}
+
+func TestDiffBudgetIgnoresFilteredContent(t *testing.T) {
+	defer func(d int) { maxDiffBytes = d }(maxDiffBytes)
+	maxDiffBytes = 300
+	dir := filteredRepo(t)
+	// A filtered file that sorts first and is bigger than the diff limit.
+	write(t, dir, "0big.secret", strings.Repeat("SECRET LINE\n", 100))
+	run(t, dir, "add", "0big.secret")
+	ctx, err := Diff(context.Background(), dir, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := ctx.Text[:strings.Index(ctx.Text, "</git-diff>")]; !strings.Contains(diff, "return 3") {
+		t.Errorf("a large filtered file used up the diff budget for ordinary changes:\n%s", diff)
+	}
+}
+
+func TestDiffNotesFilteredDeletions(t *testing.T) {
+	dir := filteredRepo(t)
+	os.Remove(filepath.Join(dir, "db.secret"))
+	ctx, err := Diff(context.Background(), dir, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ctx.Text, "db.secret (deleted; git filter, may be encrypted)") {
+		t.Errorf("filtered deletion should be noted:\n%s", ctx.Text)
+	}
+}
+
+func TestDropFilesAllowlistAndBoundaries(t *testing.T) {
+	// Each suspect section follows a kept one, so it is only dropped if it is
+	// recognised as a section boundary of its own.
+	diff := "diff --git a/checked.go b/checked.go\n+ok\n" +
+		"diff --cc conflicted.secret\n+COMBINED\n" +
+		"diff --git a/checked2.go b/checked2.go\n+ok2\n" +
+		"diff --git a/late.secret b/late.secret\n+APPEARED-AFTER-CHECK\n"
+	got, _ := dropFiles(diff, map[string]bool{"checked.go": true, "checked2.go": true}, nil)
+	for _, gone := range []string{"APPEARED-AFTER-CHECK", "COMBINED"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("%s should have been dropped:\n%s", gone, got)
+		}
+	}
+	if !strings.Contains(got, "+ok\n") || !strings.Contains(got, "+ok2") {
+		t.Errorf("checked sections should be kept:\n%s", got)
 	}
 }

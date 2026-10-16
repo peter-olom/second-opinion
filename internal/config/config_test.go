@@ -245,3 +245,10 @@ func TestParseSpecRejectsEffortTypos(t *testing.T) {
 		}
 	}
 }
+
+func TestParseSpecTrailingAt(t *testing.T) {
+	got, err := ParseSpec("codex:gpt@")
+	if err != nil || got.Model != "gpt" || got.Effort != "" {
+		t.Errorf("ParseSpec(codex:gpt@) = %+v, %v; want model gpt, no effort", got, err)
+	}
+}

@@ -77,6 +77,8 @@ func ParseSpec(spec string) (Panelist, error) {
 	// part of the model name.
 	if i := strings.LastIndex(s, "@"); i >= 0 {
 		switch suffix := s[i+1:]; {
+		case suffix == "":
+			s = s[:i] // a trailing "@" means no effort
 		case effortLevels[suffix]:
 			p.Effort, s = suffix, s[:i]
 		case isWord(suffix):

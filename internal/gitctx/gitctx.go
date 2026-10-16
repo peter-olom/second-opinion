@@ -8,6 +8,7 @@
 package gitctx
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -24,11 +25,12 @@ import (
 
 // Limits on what --diff attaches. Variables so tests can lower them.
 var (
-	maxDiffBytes  = 1 << 20    // the git diff itself
-	maxFileBytes  = 256 << 10  // any one attached file
-	maxFilesBytes = 1536 << 10 // all attached files together
-	maxPathsBytes = 1 << 20    // the list of changed and untracked paths
-	maxOmitted    = 20         // files listed by name as not attached
+	maxDiffBytes    = 1 << 20    // the git diff itself, after filtered files are dropped
+	maxRawDiffBytes = 64 << 20   // how much raw diff to read looking for that
+	maxFileBytes    = 256 << 10  // any one attached file
+	maxFilesBytes   = 1536 << 10 // all attached files together
+	maxPathsBytes   = 1 << 20    // the list of changed and untracked paths
+	maxOmitted      = 20         // files listed by name as not attached
 )
 
 // Root returns the top-level directory of the git repository containing dir.
@@ -101,13 +103,32 @@ func Diff(ctx context.Context, dir, base string) (Context, error) {
 	// decrypt secrets or run arbitrary commands) out of what is sent.
 	// Filtered files are dropped from the output here, rather than with one
 	// pathspec each, which could overflow the command line.
-	raw, diffTruncated, err := git(ctx, root, maxDiffBytes, "-c", "core.quotePath=false",
-		"diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", from)
+	// The header prefixes are pinned, since diff.mnemonicPrefix or
+	// diff.noprefix in the user's config would change them. More than the
+	// limit is read so excluded files do not use up the budget; the limit
+	// applies to what is left.
+	checked := map[string]bool{}
+	for _, p := range inDiff {
+		checked[p] = true
+	}
+	sections := &sectionFilter{checked: checked, drop: filtered}
+	var kept strings.Builder
+	diffTruncated, err := gitLines(ctx, root, maxRawDiffBytes, func(line string) bool {
+		if sections.keepLine(line) {
+			if kept.Len()+len(line) > maxDiffBytes {
+				return false
+			}
+			kept.WriteString(line)
+		}
+		return true
+	}, "-c", "core.quotePath=false", "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false",
+		"diff", "--src-prefix=a/", "--dst-prefix=b/",
+		"--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", from)
 	if err != nil {
 		return Context{}, err
 	}
-	diff := dropFiles(raw, filtered)
-	if strings.TrimSpace(diff) == "" && len(untracked) == 0 {
+	diff, unparsed := kept.String(), sections.unparsed
+	if len(inDiff) == 0 && len(untracked) == 0 {
 		return Context{}, fmt.Errorf("--diff: no changes against %s", baseDesc)
 	}
 
@@ -115,13 +136,26 @@ func Diff(ctx context.Context, dir, base string) (Context, error) {
 	if diffTruncated {
 		diff += "\n[diff truncated]"
 	}
+	if unparsed > 0 {
+		diff += fmt.Sprintf("\n[%d file section(s) left out: unrecognised diff header]", unparsed)
+	}
 	fmt.Fprintf(&b, "<git-diff base=%q>\n%s\n</git-diff>", baseDesc, strings.TrimRight(diff, "\n"))
 
 	var omitted []string
 	total := 0
+	// Filtered files that were deleted never reach attach; note them too.
+	isChanged := map[string]bool{}
+	for _, p := range changed {
+		isChanged[p] = true
+	}
+	for _, p := range inDiff {
+		if filtered[p] && !isChanged[p] {
+			omitted = append(omitted, p+" (deleted; git filter, may be encrypted)")
+		}
+	}
 	attach := func(path, status string) {
 		if filtered[path] {
-			omitted = append(omitted, path+" (git filter or diff driver; may be encrypted)")
+			omitted = append(omitted, path+" (git filter; may be encrypted)")
 			return
 		}
 		if total >= maxFilesBytes {
@@ -251,24 +285,90 @@ func gitEnv() []string {
 	return env
 }
 
-// dropFiles removes the sections for the given paths from a git diff. A
-// section whose header cannot be parsed is dropped too, to fail closed.
-func dropFiles(diff string, drop map[string]bool) string {
-	if len(drop) == 0 {
-		return diff
-	}
-	var b strings.Builder
-	keep := true
-	for _, line := range strings.SplitAfter(diff, "\n") {
-		if rest, ok := strings.CutPrefix(line, "diff --git "); ok {
-			path, ok := diffHeaderPath(strings.TrimRight(rest, "\n"))
-			keep = ok && !drop[path]
+// sectionFilter decides, line by line, which sections of a git diff to keep:
+// only those for paths that were checked and are not to be dropped. It is an
+// allowlist, so a section for a path that appeared after the check, or whose
+// header (any "diff --" line) cannot be parsed, is dropped too, to fail
+// closed. unparsed counts sections dropped for an unparseable header.
+type sectionFilter struct {
+	checked, drop map[string]bool
+	keep          bool
+	started       bool
+	unparsed      int
+}
+
+func (f *sectionFilter) keepLine(line string) bool {
+	if strings.HasPrefix(line, "diff --") {
+		f.started = true
+		rest, isGit := strings.CutPrefix(line, "diff --git ")
+		path, ok := diffHeaderPath(strings.TrimRight(rest, "\n"))
+		ok = ok && isGit
+		if !ok {
+			f.unparsed++
 		}
-		if keep {
+		f.keep = ok && f.checked[path] && !f.drop[path]
+	}
+	return f.started && f.keep
+}
+
+// dropFiles applies a sectionFilter to a whole diff.
+func dropFiles(diff string, checked, drop map[string]bool) (string, int) {
+	f := &sectionFilter{checked: checked, drop: drop}
+	var b strings.Builder
+	for _, line := range strings.SplitAfter(diff, "\n") {
+		if f.keepLine(line) {
 			b.WriteString(line)
 		}
 	}
-	return b.String()
+	return b.String(), f.unparsed
+}
+
+// gitLines runs a git command and passes its output to fn line by line. It
+// stops git when fn returns false, or after limit bytes, and reports whether
+// output was cut short either way.
+func gitLines(ctx context.Context, dir string, limit int, fn func(string) bool, args ...string) (bool, error) {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-c", "core.fsmonitor=false"}, args...)...)
+	cmd.Dir = dir
+	cmd.Env = append(gitEnv(), "GIT_OPTIONAL_LOCKS=0")
+	var stderr limitedBuffer
+	stderr.limit = 64 << 10
+	cmd.Stderr = &stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return false, err
+	}
+	if err := cmd.Start(); err != nil {
+		return false, err
+	}
+	r := bufio.NewReader(io.LimitReader(stdout, int64(limit)+1))
+	read, stopped := 0, false
+	for {
+		line, err := r.ReadString('\n')
+		read += len(line)
+		if read > limit || (line != "" && !fn(line)) {
+			stopped = true
+			break
+		}
+		if err != nil {
+			break
+		}
+	}
+	if stopped {
+		cmd.Process.Kill()
+	}
+	waitErr := cmd.Wait()
+	switch {
+	case ctx.Err() != nil:
+		return false, ctx.Err()
+	case stopped:
+		return true, nil
+	case waitErr != nil:
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return false, fmt.Errorf("git %s: %s", args[len(args)-1], msg)
+		}
+		return false, fmt.Errorf("git: %w", waitErr)
+	}
+	return false, nil
 }
 
 // diffHeaderPath extracts P from "a/P b/P" or the quoted form "\"a/P\" \"b/P\""
