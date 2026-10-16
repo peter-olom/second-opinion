@@ -90,8 +90,13 @@ func Diff(ctx context.Context, dir, base string) (Context, error) {
 		return Context{}, errors.New("--diff: could not read git's list of changed files")
 	}
 	var inDiff, changed []string
+	listed := map[string]bool{}
 	for i := 0; i < len(statuses); i += 2 {
 		status, path := statuses[i], statuses[i+1]
+		if listed[path] {
+			continue // never attach or count a path twice
+		}
+		listed[path] = true
 		inDiff = append(inDiff, path)
 		if !strings.HasPrefix(status, "D") {
 			changed = append(changed, path)

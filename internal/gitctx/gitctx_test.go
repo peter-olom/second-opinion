@@ -570,3 +570,25 @@ func TestDiffSubmodulesUseShortFormat(t *testing.T) {
 		t.Error("a textconv driver inside the submodule ran")
 	}
 }
+
+func TestDiffDuringMergeConflict(t *testing.T) {
+	dir := newRepo(t)
+	run(t, dir, "checkout", "-q", "-b", "other")
+	write(t, dir, "a.go", "package a\n\nfunc A() int { return 10 }\n")
+	run(t, dir, "commit", "-q", "-am", "other")
+	run(t, dir, "checkout", "-q", "feature")
+	write(t, dir, "a.go", "package a\n\nfunc A() int { return 20 }\n")
+	run(t, dir, "commit", "-q", "-am", "feature")
+	cmd := exec.Command("git", "merge", "-q", "other")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	cmd.Run() // expected to stop with a conflict
+
+	ctx, err := Diff(context.Background(), dir, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(ctx.Text, `<file path="a.go"`); n != 1 {
+		t.Errorf("conflicted a.go attached %d times, want once:\n%s", n, ctx.Text)
+	}
+}
