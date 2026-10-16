@@ -126,3 +126,22 @@ func TestQuotaAtTheEndBeatsTranscriptMentions(t *testing.T) {
 		t.Errorf("classify = %s, want quota so a fallback runs", got)
 	}
 }
+
+func TestTranscriptMentionsDoNotDecideTheKind(t *testing.T) {
+	// The real error is unrecognised; the transcript above it quotes code that
+	// mentions 429, quota and api key. It must not become quota (which would
+	// spend a fallback) or auth (which would send the user to sign in).
+	msg := "codex: exit status 1\n" +
+		"exec rg 'quota|429' internal/panel/errors.go\n" +
+		"{KindQuota, regexp.MustCompile(`(?i)\\b429\\b|rate.?limit`)},\n" +
+		"// invalid api key handling lives in auth.go\n" +
+		"ERROR: stream disconnected before completion"
+	if got := classify(errors.New(msg)); got != KindOther {
+		t.Errorf("classify = %s, want other", got)
+	}
+	// A real error line in the middle still counts.
+	msg = "codex: exit status 1\nERROR: 429 Too Many Requests\nShutting down."
+	if got := classify(errors.New(msg)); got != KindQuota {
+		t.Errorf("classify = %s, want quota from the error line", got)
+	}
+}

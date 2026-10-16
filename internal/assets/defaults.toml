@@ -32,7 +32,8 @@ timeout = "15m"
 # Chair for ad-hoc panels built with `so ask --with ... --with ...`.
 # default_chair = { backend = "claude", model = "opus", effort = "high" }
 
-# Override the command or append extra arguments/environment for a backend:
+# Override the command or append extra arguments/environment for a backend.
+# Extra args come after so's own flags, so they can undo its tool lockdown.
 # [backends.codex]
 # command = "/opt/homebrew/bin/codex"
 # args = ["-c", "service_tier=\"flex\""]

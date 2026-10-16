@@ -168,7 +168,7 @@ reach differs, and these are the tested guarantees:
 | backend | without repo access | with repo access |
 |---|---|---|
 | claude | No tools at all (`--tools ""`). | `Read`, `Grep`, `Glob` only. Reads outside the repository are denied. |
-| codex | Every Codex feature except networking is disabled, including **connected apps** (Gmail, GitHub, Jira, …), browser and computer use, sub-agents, image generation, and web search; so are its shell tools. Codex has no switch that guarantees no tools at all, so a read-only command path may occasionally remain. | The same, but with read-only commands enabled so it can explore the repository. Those can read any file you can read, not just the repository. |
+| codex | Every Codex feature except networking is disabled, including **connected apps** (Gmail, GitHub, Jira, …), browser and computer use, sub-agents, image generation, and web search; so are its shell tools. Codex has no switch that guarantees no tools at all, so a read-only command path may occasionally remain. | The same, but with read-only commands enabled so it can explore the repository. Those can read any file you can read, not just the repository. Codex also loads the repository's `AGENTS.md`. |
 | pi | No tools (`--no-tools`) and no context files. | `read`, `grep`, `find`, `ls`, which are not confined to the repository. pi also loads `AGENTS.md` context files from the repository, its parent folders, and `~/.pi/agent`. |
 
 Claude also gets `--setting-sources "" --strict-mcp-config` (your `CLAUDE.md` memory files may still
@@ -179,6 +179,9 @@ to use tools without repo access.
 The Codex lockdown asks Codex for its feature list (`codex features list`), which reads your
 `~/.codex/config.toml`. If that fails, Codex panelists stop with an error rather than run with
 their tools unlocked.
+
+These flags assume no overriding `args` in a `[backends.*]` section of your config: those are
+appended after `so`'s own flags, so they can undo the lockdown.
 
 `so doctor --canary` tests this on your machine. It plants a file outside each model's scratch
 folder and asks the model, configured exactly as a panelist without repo access but explicitly

@@ -203,8 +203,8 @@ func TestClaudeAndPiLockdownFlags(t *testing.T) {
 	}{
 		{"claude, no repo", claudeB, "", []string{"--tools\n\n", "--strict-mcp-config", "--setting-sources\n\n", "--no-session-persistence", "--disable-slash-commands"}, []string{"Read,Grep,Glob"}},
 		{"claude, repo", claudeB, repo, []string{"--tools\nRead,Grep,Glob\n", "--strict-mcp-config", "--setting-sources\n\n"}, nil},
-		{"pi, no repo", piB, "", []string{"--no-tools", "--no-context-files", "--no-extensions", "--no-skills", "--no-approve", "--no-session", "--append-system-prompt\n \n"}, []string{"--tools"}},
-		{"pi, repo", piB, repo, []string{"--tools\nread,grep,find,ls\n", "--no-extensions", "--no-skills", "--no-approve", "--append-system-prompt\n \n"}, []string{"--no-tools"}},
+		{"pi, no repo", piB, "", []string{"--no-tools", "--no-context-files", "--no-extensions", "--no-skills", "--no-approve", "--no-session"}, []string{"--tools"}},
+		{"pi, repo", piB, repo, []string{"--tools\nread,grep,find,ls\n", "--no-extensions", "--no-skills", "--no-approve"}, []string{"--no-tools"}},
 	} {
 		args := argvOf(t, tc.b, tc.workspace)
 		for _, w := range tc.want {
@@ -232,5 +232,31 @@ head -c 5000 /dev/zero | tr '\0' x > "$out"`)
 	_, err := codex{Options{Command: cli}}.Run(context.Background(), Request{Prompt: "q", Dir: t.TempDir()})
 	if err == nil || !strings.Contains(err.Error(), "output exceeded") {
 		t.Errorf("err = %v, want the final message bounded", err)
+	}
+}
+
+func TestPiAppendPromptIsAScratchFile(t *testing.T) {
+	// pi reads --append-system-prompt as a file if one by that name exists,
+	// relative to its cwd (the repository, with repo access). The value must
+	// be an absolute path inside the private scratch folder, so no repo file
+	// can stand in for it.
+	repo := t.TempDir()
+	os.WriteFile(filepath.Join(repo, " "), []byte("INJECTED"), 0o644)
+	scratch := t.TempDir()
+	argsFile := filepath.Join(t.TempDir(), "args")
+	cli := script(t, "printf '%s\\n' \"$@\" > "+argsFile+"\ncat >/dev/null\necho ok\n")
+	pi{Options{Command: cli}}.Run(context.Background(), Request{System: "sys", Prompt: "q", Dir: scratch, Workspace: repo})
+	data, _ := os.ReadFile(argsFile)
+	args := strings.Split(string(data), "\n")
+	i := slices.Index(args, "--append-system-prompt")
+	if i < 0 || i+1 >= len(args) {
+		t.Fatalf("no --append-system-prompt in %q", args)
+	}
+	value := args[i+1]
+	if !filepath.IsAbs(value) || filepath.Dir(value) != scratch {
+		t.Errorf("--append-system-prompt %q should be a file in the scratch folder %s", value, scratch)
+	}
+	if content, err := os.ReadFile(value); err != nil || strings.TrimSpace(string(content)) != "" {
+		t.Errorf("append file content = %q, %v; want a harmless empty file", content, err)
 	}
 }

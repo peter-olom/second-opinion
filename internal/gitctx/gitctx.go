@@ -8,7 +8,6 @@
 package gitctx
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -30,6 +29,7 @@ var (
 	maxFilesBytes   = 1536 << 10 // all attached files together
 	maxPathsBytes   = 1 << 20    // the list of changed and untracked paths
 	maxOmitted      = 20         // files listed by name as not attached
+	diffTimeout     = 5 * time.Minute
 )
 
 // Root returns the top-level directory of the git repository containing dir.
@@ -54,6 +54,8 @@ type Context struct {
 // such as "main" the diff starts at the merge-base, so it shows this branch's
 // work (committed or not) and none of main's later commits.
 func Diff(ctx context.Context, dir, base string) (Context, error) {
+	ctx, cancel := context.WithTimeout(ctx, diffTimeout)
+	defer cancel()
 	if strings.HasPrefix(base, "-") {
 		return Context{}, fmt.Errorf("--base %q: a ref cannot start with -", base)
 	}
@@ -269,43 +271,44 @@ func readAttachment(repo *os.Root, path string, limit int) ([]byte, string) {
 
 // git runs a git command and returns at most limit bytes of its output,
 // reporting whether there was more; git is stopped once the limit is reached.
-// fsmonitor hooks are disabled, and git is told not to take optional locks.
+// Output goes through a writer, so os/exec owns the copy and WaitDelay can
+// close the pipe even if a helper git started holds it. fsmonitor hooks are
+// disabled, and git is told not to take optional locks.
 func git(ctx context.Context, dir string, limit int, args ...string) (string, bool, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-c", "core.fsmonitor=false"}, args...)...)
-	cmd.Dir = dir
-	cmd.Env = append(gitEnv(), "GIT_OPTIONAL_LOCKS=0")
-	cmd.WaitDelay = 5 * time.Second // a filter helper holding stderr must not block Wait
+	runCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	out := &limitedBuffer{limit: limit, full: stop}
 	var stderr limitedBuffer
 	stderr.limit = 64 << 10
-	cmd.Stderr = &stderr
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", false, err
-	}
-	if err := cmd.Start(); err != nil {
-		return "", false, err
-	}
-	out, readErr := io.ReadAll(io.LimitReader(stdout, int64(limit)+1))
-	truncated := len(out) > limit
-	if truncated {
-		out = out[:limit]
-		cmd.Process.Kill()
-	}
-	waitErr := cmd.Wait()
+	err := runGit(runCtx, dir, out, &stderr, args...)
 	switch {
 	case ctx.Err() != nil:
 		return "", false, ctx.Err()
-	case truncated:
-		return string(out), true, nil
-	case readErr != nil:
-		return "", false, readErr
-	case waitErr != nil:
+	case out.truncated:
+		return string(out.buf), true, nil
+	case err != nil:
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
 			return "", false, fmt.Errorf("git %s: %s", args[0], msg)
 		}
-		return "", false, fmt.Errorf("git %s: %w", args[0], waitErr)
+		return "", false, fmt.Errorf("git %s: %w", args[0], err)
 	}
-	return string(out), false, nil
+	return string(out.buf), false, nil
+}
+
+// runGit runs git with the shared safety settings and the given output writers.
+func runGit(ctx context.Context, dir string, stdout, stderr io.Writer, args ...string) error {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-c", "core.fsmonitor=false"}, args...)...)
+	cmd.Dir = dir
+	cmd.Env = append(gitEnv(), "GIT_OPTIONAL_LOCKS=0")
+	cmd.WaitDelay = 5 * time.Second
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	err := cmd.Run()
+	// If git exited successfully but a helper it started kept the output
+	// pipe open, WaitDelay closed it; git's own output is complete.
+	if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+		return nil
+	}
+	return err
 }
 
 // gitEnv is the environment without variables that would point git at a
@@ -365,55 +368,78 @@ func dropFiles(diff string, checked, drop map[string]bool) (string, int) {
 // stops git when fn returns false, or after limit bytes, and reports whether
 // output was cut short either way.
 func gitLines(ctx context.Context, dir string, limit int, fn func(string) bool, args ...string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-c", "core.fsmonitor=false"}, args...)...)
-	cmd.Dir = dir
-	cmd.Env = append(gitEnv(), "GIT_OPTIONAL_LOCKS=0")
-	cmd.WaitDelay = 5 * time.Second
+	runCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	lw := &lineWriter{fn: fn, limit: limit, stop: stop}
 	var stderr limitedBuffer
 	stderr.limit = 64 << 10
-	cmd.Stderr = &stderr
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return false, err
-	}
-	if err := cmd.Start(); err != nil {
-		return false, err
-	}
-	r := bufio.NewReader(io.LimitReader(stdout, int64(limit)+1))
-	read, stopped := 0, false
-	var readErr error
-	for {
-		line, err := r.ReadString('\n')
-		read += len(line)
-		if read > limit || (line != "" && !fn(line)) {
-			stopped = true
-			break
-		}
-		if err != nil {
-			if err != io.EOF {
-				readErr = err
-			}
-			break
-		}
-	}
-	if stopped {
-		cmd.Process.Kill()
-	}
-	waitErr := cmd.Wait()
+	err := runGit(runCtx, dir, lw, &stderr, args...)
+	lw.flush()
 	switch {
 	case ctx.Err() != nil:
 		return false, ctx.Err()
-	case stopped:
+	case lw.stopped:
 		return true, nil
-	case readErr != nil:
-		return false, fmt.Errorf("reading git output: %w", readErr)
-	case waitErr != nil:
+	case err != nil:
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
 			return false, fmt.Errorf("git diff: %s", msg)
 		}
-		return false, fmt.Errorf("git diff: %w", waitErr)
+		return false, fmt.Errorf("git diff: %w", err)
 	}
 	return false, nil
+}
+
+// lineWriter splits what is written to it into lines for fn, and stops (by
+// cancelling the command) when fn returns false or limit bytes have arrived.
+type lineWriter struct {
+	fn      func(string) bool
+	limit   int
+	stop    func()
+	read    int
+	partial []byte
+	stopped bool
+}
+
+func (w *lineWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	if w.stopped {
+		return n, nil
+	}
+	w.read += n
+	if w.read > w.limit {
+		w.halt()
+		return n, nil
+	}
+	w.partial = append(w.partial, p...)
+	for {
+		i := bytes.IndexByte(w.partial, '\n')
+		if i < 0 {
+			break
+		}
+		line := string(w.partial[:i+1])
+		w.partial = w.partial[i+1:]
+		if !w.fn(line) {
+			w.halt()
+			return n, nil
+		}
+	}
+	return n, nil
+}
+
+// flush hands a final line without a newline to fn.
+func (w *lineWriter) flush() {
+	if !w.stopped && len(w.partial) > 0 {
+		if !w.fn(string(w.partial)) {
+			w.stopped = true
+		}
+		w.partial = nil
+	}
+}
+
+func (w *lineWriter) halt() {
+	w.stopped = true
+	w.partial = nil
+	w.stop()
 }
 
 // diffHeaderPath extracts P from "a/P b/P" or the quoted form "\"a/P\" \"b/P\""
@@ -450,13 +476,13 @@ func filteredPaths(ctx context.Context, root string, paths []string) (map[string
 	if len(paths) == 0 {
 		return filtered, nil
 	}
-	cmd := exec.CommandContext(ctx, "git", "-c", "core.fsmonitor=false", "check-attr", "-z", "--stdin", "filter")
-	cmd.Dir = root
-	cmd.WaitDelay = 5 * time.Second
-	cmd.Env = append(gitEnv(), "GIT_OPTIONAL_LOCKS=0")
-	cmd.Stdin = strings.NewReader(strings.Join(paths, "\x00") + "\x00")
 	var out, stderr limitedBuffer
 	out.limit, stderr.limit = 16<<20, 64<<10
+	cmd := exec.CommandContext(ctx, "git", "-c", "core.fsmonitor=false", "check-attr", "-z", "--stdin", "filter")
+	cmd.Dir = root
+	cmd.Env = append(gitEnv(), "GIT_OPTIONAL_LOCKS=0")
+	cmd.WaitDelay = 5 * time.Second
+	cmd.Stdin = strings.NewReader(strings.Join(paths, "\x00") + "\x00")
 	cmd.Stdout, cmd.Stderr = &out, &stderr
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
@@ -496,16 +522,21 @@ func gitPaths(ctx context.Context, dir string, args ...string) ([]string, error)
 	return paths, nil
 }
 
-// limitedBuffer keeps the first limit bytes written to it.
+// limitedBuffer keeps the first limit bytes written to it. If full is set,
+// it is called once the limit is exceeded, to stop the writer early.
 type limitedBuffer struct {
 	buf       []byte
 	limit     int
 	truncated bool
+	full      func()
 }
 
 func (b *limitedBuffer) Write(p []byte) (int, error) {
 	room := b.limit - len(b.buf)
 	if len(p) > room {
+		if !b.truncated && b.full != nil {
+			b.full()
+		}
 		b.truncated = true
 	}
 	if room > 0 {

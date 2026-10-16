@@ -2,6 +2,8 @@ package backend
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -11,6 +13,16 @@ import (
 type pi struct{ opts Options }
 
 func (p pi) Run(ctx context.Context, req Request) (string, error) {
+	// pi appends a discovered APPEND_SYSTEM.md (from ~/.pi/agent, or a
+	// trusted project) only when no --append-system-prompt is given, so one
+	// is always passed. pi reads the value as a file if a file by that name
+	// exists, relative to its working directory (the repository, with repo
+	// access), so it is an absolute path to a harmless file in the private
+	// scratch folder rather than literal text a repo file could shadow.
+	appendFile := filepath.Join(req.Dir, "append-system-prompt.md")
+	if err := os.WriteFile(appendFile, []byte("\n"), 0o600); err != nil {
+		return "", err
+	}
 	args := []string{
 		"--print",
 		"--no-session",
@@ -19,10 +31,7 @@ func (p pi) Run(ctx context.Context, req Request) (string, error) {
 		"--no-prompt-templates",
 		"--no-approve",
 		"--system-prompt", req.System,
-		// pi appends a discovered APPEND_SYSTEM.md (from ~/.pi/agent, or a
-		// trusted project) only when no --append-system-prompt is given, so a
-		// harmless non-empty one keeps the user's file out of the panel.
-		"--append-system-prompt", " ",
+		"--append-system-prompt", appendFile,
 	}
 	if req.Workspace != "" {
 		args = append(args, "--tools", "read,grep,find,ls")

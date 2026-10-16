@@ -651,3 +651,42 @@ func TestDiffRejectsOptionLikeBase(t *testing.T) {
 		t.Errorf("err = %v, want an option-like base refused", err)
 	}
 }
+
+func TestDiffDoesNotWaitForHelpersHoldingStdout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a shell wrapper for git")
+	}
+	dir := newRepo(t)
+	write(t, dir, "a.go", "package a\n\nfunc A() int { return 3 }\n")
+	realGit, _ := exec.LookPath("git")
+	bin := t.TempDir()
+	// A git wrapper that leaves a process holding stdout open for 30s.
+	os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\n"+
+		"case \"$*\" in *--src-prefix=a/*) sleep 30 & ;; esac\n"+
+		"exec "+realGit+" \"$@\"\n"), 0o755)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	start := time.Now()
+	ctx, err := Diff(context.Background(), dir, "HEAD")
+	if d := time.Since(start); d > 15*time.Second {
+		t.Errorf("Diff took %s waiting on a helper", d)
+	}
+	if err != nil || !strings.Contains(ctx.Text, "return 3") {
+		t.Errorf("Diff = %v; want the change collected", err)
+	}
+}
+
+func TestDiffRawReadLimit(t *testing.T) {
+	defer func(n int) { maxRawDiffBytes = n }(maxRawDiffBytes)
+	maxRawDiffBytes = 300
+	dir := filteredRepo(t)
+	write(t, dir, "0big.secret", strings.Repeat("SECRET LINE\n", 100))
+	run(t, dir, "add", "0big.secret")
+	ctx, err := Diff(context.Background(), dir, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ctx.Text, "[diff truncated]") {
+		t.Errorf("reading stopped at the raw limit, so the diff must say it was truncated:\n%s", ctx.Text)
+	}
+}

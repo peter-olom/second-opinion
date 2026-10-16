@@ -145,7 +145,7 @@ func TestPromptBudgetStopsBeforeReadingMore(t *testing.T) {
 
 func TestGuardRefusesEvenWhenEmpty(t *testing.T) {
 	t.Setenv(backend.EnvGuard, "")
-	if code := run(context.Background(), []string{"ask", "hello"}); code != 3 {
+	if code := run(context.Background(), []string{"ask", "--config", fakePiConfig(t), "hello"}); code != 3 {
 		t.Errorf("exit code = %d, want 3 for an empty but present guard", code)
 	}
 	if code := run(context.Background(), []string{"doctor", "--ping", "--config", filepath.Join(t.TempDir(), "c.toml"), "-w", "pi:x"}); code != 3 {
@@ -156,7 +156,7 @@ func TestGuardRefusesEvenWhenEmpty(t *testing.T) {
 func TestNegativeTimeoutRejected(t *testing.T) {
 	unsetEnv(t, backend.EnvGuard)
 	captureStderr(t, func() {
-		if code := run(context.Background(), []string{"ask", "--timeout", "-1s", "-w", "pi:x", "q"}); code != 1 {
+		if code := run(context.Background(), []string{"ask", "--config", fakePiConfig(t), "--timeout", "-1s", "-w", "pi:x", "q"}); code != 1 {
 			t.Errorf("exit code = %d, want 1", code)
 		}
 	})
@@ -246,7 +246,7 @@ func TestDiffRefusedInHomeRootedRepo(t *testing.T) {
 	os.WriteFile(filepath.Join(home, ".netrc"), []byte("password HOME-SECRET"), 0o600)
 	t.Chdir(sub)
 	stderr := captureStderr(t, func() {
-		if code := run(context.Background(), []string{"ask", "--diff", "-w", "pi:x", "q"}); code != 1 {
+		if code := run(context.Background(), []string{"ask", "--config", fakePiConfig(t), "--diff", "-w", "pi:x", "q"}); code != 1 {
 			t.Errorf("exit code = %d, want 1", code)
 		}
 	})
@@ -260,7 +260,7 @@ func TestBoundedOutputDoesNotHangOnGrandchild(t *testing.T) {
 		t.Skip("shell script")
 	}
 	cli := filepath.Join(t.TempDir(), "slow")
-	os.WriteFile(cli, []byte("#!/bin/sh\nsleep 60 &\necho v1\nsleep 60\n"), 0o755)
+	os.WriteFile(cli, []byte("#!/bin/sh\nsleep 8 &\necho v1\nsleep 8\n"), 0o755)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	start := time.Now()
@@ -295,5 +295,35 @@ func TestResolveWorkspaceHonoursCancellation(t *testing.T) {
 	cancel()
 	if got, err := resolveWorkspace(ctx, true, false, nil); err == nil {
 		t.Errorf("cancelled discovery returned %q, want the cancellation", got)
+	}
+}
+
+// fakePiConfig is a config whose pi backend is a path that does not exist, so
+// a test that regresses can never reach the developer's real pi.
+func fakePiConfig(t *testing.T) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "config.toml")
+	os.WriteFile(p, []byte("[backends.pi]\ncommand = \"/nonexistent/so-test-pi\"\n"), 0o644)
+	return p
+}
+
+func TestAnonymousFailureWithoutHistory(t *testing.T) {
+	unsetEnv(t, backend.EnvGuard)
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "pi")
+	os.WriteFile(fake, []byte("#!/bin/sh\ncat >/dev/null\necho 'pi: model secret-model-9 is broken' >&2\nexit 1\n"), 0o755)
+	cfg := filepath.Join(dir, "config.toml")
+	os.WriteFile(cfg, []byte("history = false\n[backends.pi]\ncommand = \""+fake+"\"\n"), 0o644)
+
+	out := captureStdout(t, func() {
+		captureStderr(t, func() {
+			run(context.Background(), []string{"ask", "--config", cfg, "--no-repo", "-w", "pi:a", "-w", "pi:b", "q"})
+		})
+	})
+	if strings.Contains(out, "secret-model-9") {
+		t.Errorf("anonymous output leaked the backend's error:\n%s", out)
+	}
+	if strings.Contains(out, "so runs show") || !strings.Contains(out, "not recorded") {
+		t.Errorf("with history off, the hint must not point to a run:\n%s", out)
 	}
 }

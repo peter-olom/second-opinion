@@ -50,14 +50,27 @@ func classify(err error) ErrorKind {
 	case errors.Is(err, context.Canceled):
 		return KindCancelled
 	}
+	// The first line is so's own "<cli>: exit status N"; the last is usually
+	// the CLI's real error. Lines in between are often transcript (code,
+	// prompts, tool output), which can mention "429" or "api key" without
+	// being the error, so only lines that look like errors are considered.
 	msg := strings.TrimSpace(err.Error())
-	if i := strings.LastIndexByte(msg, '\n'); i >= 0 {
-		if k := match(msg[i+1:]); k != KindOther {
-			return k
+	lines := strings.Split(msg, "\n")
+	if k := match(lines[len(lines)-1]); k != KindOther {
+		return k
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		if errorLine.MatchString(lines[i]) {
+			if k := match(lines[i]); k != KindOther {
+				return k
+			}
 		}
 	}
-	return match(msg)
+	return KindOther
 }
+
+// errorLine matches lines that state an error rather than quote one.
+var errorLine = regexp.MustCompile(`(?i)^\s*(\S+:\s+)?(error|fatal|failed)\b|^\s*\{"type":\s*"error"|^\s*\d{3}[\s:]|^\s*\S+: exit status`)
 
 func match(s string) ErrorKind {
 	for _, p := range kindPatterns {
