@@ -51,10 +51,11 @@ It lists what it will remove and asks before deleting (`--yes` skips the prompt)
   symlink.
 - If you run `so` through a symlink, only the link is removed. The file it points to stays. If you
   run the binary itself, any `so` links on your PATH that point to it are removed too, so none is
-  left dangling. If it can't prove which file you ran, it leaves the binary in place and tells you.
+  left dangling (not on Windows, where the binary is moved aside instead). If it can't prove which file you ran, it leaves the binary in place and tells you.
 - On Windows a running program can't delete itself, so the binary is renamed to `so.exe.old` for
   you to delete afterwards.
-- If any path or folder can't be inspected, it stops before deleting anything.
+- If any folder it would remove from can't be inspected, it stops before deleting anything. If it
+  can't inspect the binary, it keeps it and tells you.
 - On Windows, if `so.exe.old` already exists it uses `so.exe.old.1`, and so on, rather than
   overwriting it.
 - It doesn't track skills you installed elsewhere with `so skill install --dir`, so remove those

@@ -1061,3 +1061,73 @@ func TestUninstallRemovesPathLinksToTheBinary(t *testing.T) {
 	}
 	mustBeGone(t, f.bin, link)
 }
+
+func TestUninstallKeepsPathLinkToHardlinkOfBinary(t *testing.T) {
+	f := newFixture(t)
+	// /opt/so is a hard link to the binary (kept), and bin2/so links to it.
+	opt := filepath.Join(f.home, "opt")
+	mkdir(t, opt)
+	hard := filepath.Join(opt, "so")
+	if err := os.Link(f.bin, hard); err != nil {
+		t.Skip("hard links unavailable:", err)
+	}
+	bin2 := filepath.Join(f.home, "bin2")
+	mkdir(t, bin2)
+	link := filepath.Join(bin2, "so")
+	if err := os.Symlink(hard, link); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	t.Setenv("PATH", filepath.Join(f.home, "bin")+string(os.PathListSeparator)+bin2)
+
+	if code, _, stderr := f.uninstall(t, "", "--yes"); code != 0 {
+		t.Fatalf("exit code = %d: %s", code, stderr)
+	}
+	mustBeGone(t, f.bin)
+	mustExist(t, hard, link)
+}
+
+func TestUninstallKeepsPathLinkToDifferentExecutable(t *testing.T) {
+	f := newFixture(t)
+	tool := filepath.Join(t.TempDir(), "other-so")
+	write(t, tool)
+	os.Chmod(tool, 0o755)
+	bin2 := filepath.Join(f.home, "bin2")
+	mkdir(t, bin2)
+	link := filepath.Join(bin2, "so")
+	if err := os.Symlink(tool, link); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	t.Setenv("PATH", filepath.Join(f.home, "bin")+string(os.PathListSeparator)+bin2)
+
+	_, out, _ := f.uninstall(t, "", "--yes")
+	mustBeGone(t, f.bin)
+	mustExist(t, link, tool)
+	if !strings.Contains(out, "another so is still on your PATH at "+link) {
+		t.Errorf("the other so should be reported:\n%s", out)
+	}
+}
+
+func TestUninstallNotesKeptTargetOfRemovedLink(t *testing.T) {
+	f := newFixture(t)
+	// so is started through bin/so -> build/so, and build is on PATH too.
+	build := filepath.Join(f.home, "build")
+	mkdir(t, build)
+	target := filepath.Join(build, "so")
+	write(t, target)
+	os.Chmod(target, 0o755)
+	link := filepath.Join(f.home, "bin/so")
+	os.Remove(link)
+	if err := os.Symlink(target, link); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	t.Setenv("PATH", filepath.Join(f.home, "bin")+string(os.PathListSeparator)+build)
+	executable = func() (string, error) { return target, nil }
+	invokedAs = func() string { return "so" }
+
+	_, out, _ := f.uninstall(t, "", "--yes")
+	mustBeGone(t, link)
+	mustExist(t, target)
+	if !strings.Contains(out, "so is still on your PATH at "+target+" (the binary the removed link pointed to)") {
+		t.Errorf("the kept target on PATH should be reported:\n%s", out)
+	}
+}

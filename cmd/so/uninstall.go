@@ -151,9 +151,12 @@ func cmdUninstall(ctx context.Context, args []string) int {
 	}
 
 	code := 0
-	binaryRemoved := false
+	binaryRemoved, binaryPlanned := false, false
 	for i, r := range plan {
 		_, stillThere, _ := lstat(r.path)
+		if r.what == "binary" || r.what == "binary link" {
+			binaryPlanned = true
+		}
 		if r.what == "binary" && !failed[i] {
 			binaryRemoved = true
 		}
@@ -174,9 +177,14 @@ func cmdUninstall(ctx context.Context, args []string) int {
 	}
 
 	if other, err := lookPath("so"); err == nil && !plannedBinary(plan, other) {
-		if fi, err := os.Stat(other); err == nil && !binaryRemoved && running != nil && os.SameFile(fi, running) {
-			// The running binary, which was kept; its note was printed above.
-		} else {
+		fi, err := os.Stat(other)
+		isRunning := err == nil && running != nil && os.SameFile(fi, running)
+		switch {
+		case isRunning && !binaryPlanned:
+			// The running binary, deliberately kept; its note was printed above.
+		case isRunning && !binaryRemoved:
+			fmt.Printf("note: so is still on your PATH at %s (the binary the removed link pointed to)\n", other)
+		default:
 			fmt.Printf("note: another so is still on your PATH at %s\n", other)
 		}
 	}
@@ -574,18 +582,19 @@ func binaryRemoval() ([]removal, string, error) {
 	plan := []removal{{what: "binary", path: started, files: []string{started}}}
 	// Links named so on PATH that point to this binary would dangle once it
 	// is deleted, so they go too.
-	for _, link := range linksOnPath(exeInfo, started) {
+	for _, link := range linksOnPath(started) {
 		plan = append(plan, removal{what: "binary link", path: link, files: []string{link},
 			note: "points to the binary being removed"})
 	}
 	return plan, "", nil
 }
 
-// linksOnPath returns symlinks named so in PATH folders that point to the
-// file described by target, other than skip.
-func linksOnPath(target os.FileInfo, skip string) []string {
+// linksOnPath returns symlinks named so in PATH folders that resolve to the
+// binary at bin (a physical path) itself, not merely to another name for the
+// same file such as a hard link, which uninstall keeps.
+func linksOnPath(bin string) []string {
 	var links []string
-	seen := map[string]bool{skip: true}
+	seen := map[string]bool{bin: true}
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
 		if dir == "" {
 			dir = "."
@@ -599,7 +608,7 @@ func linksOnPath(target os.FileInfo, skip string) []string {
 		if err != nil || fi.Mode()&fs.ModeSymlink == 0 {
 			continue
 		}
-		if ti, err := os.Stat(p); err == nil && os.SameFile(ti, target) {
+		if resolved, err := filepath.EvalSymlinks(p); err == nil && resolved == bin {
 			links = append(links, p)
 		}
 	}
