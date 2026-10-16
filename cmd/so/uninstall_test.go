@@ -984,7 +984,80 @@ func TestUninstallKeepsSkillFolderAnotherHarnessLinksTo(t *testing.T) {
 	if _, err := os.Stat(codex); err != nil {
 		t.Errorf("the codex skill link should still resolve (no dangling link): %v", err)
 	}
-	if !strings.Contains(out, "kept the folder because a symlink elsewhere points to it") {
+	if !strings.Contains(out, "kept the folder because a symlink may lead to it") {
 		t.Errorf("output should explain why the folder was kept:\n%s", out)
 	}
+}
+
+func TestUninstallAllKeepsFolderSymlinkedRunsPointsTo(t *testing.T) {
+	f := newFixture(t)
+	// runs -> the config folder, which holds only config.toml.
+	runs := filepath.Join(f.state, "runs")
+	os.RemoveAll(runs)
+	cfgDir := filepath.Dir(f.cfg)
+	if err := os.Symlink(cfgDir, runs); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	if code, _, stderr := f.uninstall(t, "", "--all", "--yes"); code != 0 {
+		t.Fatalf("exit code = %d: %s", code, stderr)
+	}
+	mustBeGone(t, f.cfg)
+	if _, err := os.Stat(runs); err != nil {
+		t.Errorf("the runs link should still resolve (no dangling link): %v", err)
+	}
+}
+
+func TestUninstallOnWindowsRemovesOnlyTheLink(t *testing.T) {
+	f := newFixture(t)
+	goos = "windows"
+	target := filepath.Join(t.TempDir(), "apps/so.exe")
+	mkdir(t, filepath.Dir(target))
+	write(t, target)
+	link := filepath.Join(f.home, "bin/so.exe")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	executable = func() (string, error) { return link, nil } // Windows reports the link
+
+	if code, _, stderr := f.uninstall(t, "", "--yes"); code != 0 {
+		t.Fatalf("exit code = %d: %s", code, stderr)
+	}
+	mustBeGone(t, link)
+	mustExist(t, target)
+	if exists(target + ".old") {
+		t.Error("the link's target should not be moved aside")
+	}
+}
+
+func TestUninstallNotesHardlinkedSoLeftOnPath(t *testing.T) {
+	f := newFixture(t)
+	other := filepath.Join(t.TempDir(), "other-bin")
+	mkdir(t, other)
+	if err := os.Link(f.bin, filepath.Join(other, "so")); err != nil {
+		t.Skip("hard links unavailable:", err)
+	}
+	t.Setenv("PATH", filepath.Join(f.home, "bin")+string(os.PathListSeparator)+other)
+
+	_, out, _ := f.uninstall(t, "", "--yes")
+	mustBeGone(t, f.bin)
+	if !strings.Contains(out, "another so is still on your PATH at "+filepath.Join(other, "so")) {
+		t.Errorf("a working so left on PATH must be reported:\n%s", out)
+	}
+}
+
+func TestUninstallRemovesPathLinksToTheBinary(t *testing.T) {
+	f := newFixture(t)
+	// ~/bin2/so -> ~/bin/so; so is run directly as ~/bin/so.
+	bin2 := filepath.Join(f.home, "bin2")
+	mkdir(t, bin2)
+	link := filepath.Join(bin2, "so")
+	if err := os.Symlink(f.bin, link); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	t.Setenv("PATH", filepath.Join(f.home, "bin")+string(os.PathListSeparator)+bin2)
+
+	if code, _, stderr := f.uninstall(t, "", "--yes"); code != 0 {
+		t.Fatalf("exit code = %d: %s", code, stderr)
+	}
+	mustBeGone(t, f.bin, link)
 }

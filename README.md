@@ -49,8 +49,9 @@ It lists what it will remove and asks before deleting (`--yes` skips the prompt)
   link is left dangling. To be safe, with `--all` it also keeps the config's folder (even if empty)
   when the config path is relative, contains `.` or `..`, or when the config's own folder is a
   symlink.
-- If you run `so` through a symlink, only the link is removed. The file it points to stays. If it
-  can't prove which file you ran, it leaves the binary in place and tells you.
+- If you run `so` through a symlink, only the link is removed. The file it points to stays. If you
+  run the binary itself, any `so` links on your PATH that point to it are removed too, so none is
+  left dangling. If it can't prove which file you ran, it leaves the binary in place and tells you.
 - On Windows a running program can't delete itself, so the binary is renamed to `so.exe.old` for
   you to delete afterwards.
 - If any path or folder can't be inspected, it stops before deleting anything.

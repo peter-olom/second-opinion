@@ -151,8 +151,12 @@ func cmdUninstall(ctx context.Context, args []string) int {
 	}
 
 	code := 0
+	binaryRemoved := false
 	for i, r := range plan {
 		_, stillThere, _ := lstat(r.path)
+		if r.what == "binary" && !failed[i] {
+			binaryRemoved = true
+		}
 		switch {
 		case failed[i]:
 			code = 1
@@ -161,7 +165,7 @@ func cmdUninstall(ctx context.Context, args []string) int {
 		case stillThere:
 			why := "it still contains other files"
 			if entries, err := os.ReadDir(r.path); err == nil && len(entries) == 0 {
-				why = "a symlink elsewhere points to it"
+				why = "a symlink may lead to it"
 			}
 			fmt.Printf("removed so's files from %s; kept the folder because %s\n", r.path, why)
 		default:
@@ -170,7 +174,7 @@ func cmdUninstall(ctx context.Context, args []string) int {
 	}
 
 	if other, err := lookPath("so"); err == nil && !plannedBinary(plan, other) {
-		if fi, err := os.Stat(other); err == nil && running != nil && os.SameFile(fi, running) {
+		if fi, err := os.Stat(other); err == nil && !binaryRemoved && running != nil && os.SameFile(fi, running) {
 			// The running binary, which was kept; its note was printed above.
 		} else {
 			fmt.Printf("note: another so is still on your PATH at %s\n", other)
@@ -245,6 +249,7 @@ func planUninstall(cfg string, cfgParentIsLink, all bool) (plan []removal, notes
 	if state := history.StateDir(); state != "" {
 		protectTarget(state)
 		runs := filepath.Join(state, "runs")
+		protectTarget(runs)
 		var names []string
 		fi, ok, err := lstat(runs)
 		if err != nil {
@@ -293,16 +298,14 @@ func planUninstall(cfg string, cfgParentIsLink, all bool) (plan []removal, notes
 		plan = append(plan, r)
 	}
 
-	r, note, err := binaryRemoval()
+	bins, note, err := binaryRemoval()
 	if err != nil {
 		return nil, nil, err
 	}
 	if note != "" {
 		notes = append(notes, note)
 	}
-	if r != nil {
-		plan = append(plan, *r)
-	}
+	plan = append(plan, bins...)
 
 	// A config folder reached through a symlink is never removed either,
 	// whichever entry would otherwise remove it (say, history sharing it).
@@ -503,23 +506,30 @@ func ownedDir(dir string, files []string, keep func(string) bool, subdirs ...str
 // the way the filesystem does, and only removes something it can prove is the
 // running binary: the file itself, or a symlink to it, in which case only the
 // link goes. Anything else is left in place with a note.
-func binaryRemoval() (*removal, string, error) {
-	exe, err := executable()
+func binaryRemoval() ([]removal, string, error) {
+	raw, err := executable()
 	if err != nil {
 		return nil, "could not locate the running so binary; remove it yourself", nil
 	}
-	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+	exe := raw
+	if resolved, err := filepath.EvalSymlinks(raw); err == nil {
 		exe = resolved
 	}
 	exeInfo, err := os.Stat(exe)
 	if err != nil {
 		return nil, fmt.Sprintf("could not inspect the running binary %s; remove it yourself", exe), nil
 	}
-	kept := func(why string) (*removal, string, error) {
+	kept := func(why string) ([]removal, string, error) {
 		return nil, fmt.Sprintf("the running binary %s was not removed because %s", exe, why), nil
 	}
 
 	if goos == "windows" {
+		// If Windows reports so as started through a symlink, remove only the
+		// link: it is not locked, and the program it points to stays intact.
+		if fi, err := os.Lstat(raw); err == nil && fi.Mode()&fs.ModeSymlink != 0 {
+			return []removal{{what: "binary link", path: raw, files: []string{raw},
+				note: "points to " + exe + ", which is kept"}}, "", nil
+		}
 		// A running exe cannot be deleted on Windows, but it can be renamed.
 		// Never overwrite an existing file in the process.
 		if !isSoName(exe) {
@@ -536,8 +546,8 @@ func binaryRemoval() (*removal, string, error) {
 			}
 			dest = fmt.Sprintf("%s.old.%d", exe, n)
 		}
-		return &removal{what: "binary", path: exe, rename: dest,
-			note: "moved aside; Windows cannot delete a running program"}, "", nil
+		return []removal{{what: "binary", path: exe, rename: dest,
+			note: "moved aside; Windows cannot delete a running program"}}, "", nil
 	}
 
 	started, err := startedFrom()
@@ -550,8 +560,8 @@ func binaryRemoval() (*removal, string, error) {
 	}
 	if fi.Mode()&fs.ModeSymlink != 0 {
 		if ti, err := os.Stat(started); err == nil && os.SameFile(ti, exeInfo) {
-			return &removal{what: "binary link", path: started, files: []string{started},
-				note: "points to " + exe + ", which is kept"}, "", nil
+			return []removal{{what: "binary link", path: started, files: []string{started},
+				note: "points to " + exe + ", which is kept"}}, "", nil
 		}
 		return kept("so was started through " + started + ", which does not point to it")
 	}
@@ -561,7 +571,39 @@ func binaryRemoval() (*removal, string, error) {
 	if !isSoName(started) {
 		return kept("it is not named so")
 	}
-	return &removal{what: "binary", path: started, files: []string{started}}, "", nil
+	plan := []removal{{what: "binary", path: started, files: []string{started}}}
+	// Links named so on PATH that point to this binary would dangle once it
+	// is deleted, so they go too.
+	for _, link := range linksOnPath(exeInfo, started) {
+		plan = append(plan, removal{what: "binary link", path: link, files: []string{link},
+			note: "points to the binary being removed"})
+	}
+	return plan, "", nil
+}
+
+// linksOnPath returns symlinks named so in PATH folders that point to the
+// file described by target, other than skip.
+func linksOnPath(target os.FileInfo, skip string) []string {
+	var links []string
+	seen := map[string]bool{skip: true}
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if dir == "" {
+			dir = "."
+		}
+		p, err := physicalPath(dir + string(filepath.Separator) + "so")
+		if err != nil || seen[p] {
+			continue
+		}
+		seen[p] = true
+		fi, err := os.Lstat(p)
+		if err != nil || fi.Mode()&fs.ModeSymlink == 0 {
+			continue
+		}
+		if ti, err := os.Stat(p); err == nil && os.SameFile(ti, target) {
+			links = append(links, p)
+		}
+	}
+	return links
 }
 
 // startedFrom returns the path so was started from, resolved the way the

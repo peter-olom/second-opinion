@@ -35,7 +35,7 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
       - run: go build ./cmd/so
-      - run: go test ./cmd/so -run "TestResolveConfigPathKeepsDriveRoot|TestResolveConfigPathRootedWithoutDrive|TestUninstallMovesRunningBinaryAsideOnWindows|TestUninstallNeverOverwritesOldBinaryOnWindows" -v
+      - run: go test ./cmd/so -run "TestResolveConfigPathKeepsDriveRoot|TestResolveConfigPathRootedWithoutDrive|TestUninstallMovesRunningBinaryAsideOnWindows|TestUninstallNeverOverwritesOldBinaryOnWindows|TestUninstallOnWindowsRemovesOnlyTheLink" -v
 
   snapshot:
     runs-on: ubuntu-latest
