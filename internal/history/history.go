@@ -52,9 +52,9 @@ func Dir() string {
 
 const idTimeLayout = "20060102-150405"
 
-// NewID returns an ID that sorts by time, e.g. 20261015-143012-a3f9.
+// NewID returns an ID that sorts by time, e.g. 20261015-143012-a3f9c2e1.
 func NewID(t time.Time) string {
-	b := make([]byte, 2)
+	b := make([]byte, 4)
 	rand.Read(b)
 	return t.Format(idTimeLayout) + "-" + hex.EncodeToString(b)
 }
@@ -67,11 +67,25 @@ func Save(dir string, r Record, maxAge time.Duration) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+	// MkdirAll leaves an existing directory's mode alone; records hold prompts
+	// and code, so make sure only the user can read them.
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, r.ID+".json"), data, 0o600); err != nil {
+	// O_EXCL never follows a symlink and never overwrites an existing record.
+	f, err := os.OpenFile(filepath.Join(dir, r.ID+".json"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
 		return err
 	}
 	Prune(dir, time.Now().Add(-maxAge))

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/peter-olom/second-opinion/internal/backend"
+	"github.com/peter-olom/second-opinion/internal/config"
 )
 
 func TestAskRefusesInsidePanelist(t *testing.T) {
@@ -195,4 +196,13 @@ func captureStdout(t *testing.T, fn func()) string {
 	os.Stdout = orig
 	w.Close()
 	return <-done
+}
+
+func loadConfigForTest(t *testing.T, path string) *config.Config {
+	t.Helper()
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg
 }

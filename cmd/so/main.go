@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -48,8 +49,15 @@ Run "so ask --help" for ask flags.
 `
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
+	// The first signal cancels gracefully (killing panelists' process groups);
+	// restoring default handling means a second one exits immediately, even
+	// if so is stuck reading input.
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
 	os.Exit(run(ctx, os.Args[1:]))
 }
 
@@ -115,8 +123,8 @@ func newFlagSet(name, synopsis string) (*pflag.FlagSet, *string) {
 
 func cmdAsk(ctx context.Context, args []string) int {
 	fs, cfgPath := newFlagSet("ask", "so ask [flags] [prompt]\n\n"+
-		"The prompt is taken from the arguments, or from stdin if no arguments are given.\n"+
-		"If both are present, stdin is attached to the prompt (e.g. git diff | so ask -m review \"...\").")
+		"The prompt is taken from the arguments, or from stdin if there are none.\n"+
+		"End the arguments with - to attach stdin as well (e.g. git diff | so ask -m review \"...\" -).")
 	profile := fs.StringP("profile", "p", "", "profile to ask (default from config)")
 	mode := fs.StringP("mode", "m", "", "response mode, e.g. general, review, plan, debug")
 	files := fs.StringArrayP("file", "f", nil, "attach a file to the prompt (repeatable)")
@@ -136,9 +144,12 @@ func cmdAsk(ctx context.Context, args []string) int {
 		return code
 	}
 
-	if os.Getenv(backend.EnvGuard) != "" {
+	if insidePanelist() {
 		fmt.Fprintln(os.Stderr, "so: refusing to run inside a second-opinion panelist; answer the request yourself.")
 		return 3
+	}
+	if *timeout < 0 {
+		return fail(errors.New("--timeout must be positive"))
 	}
 	if *format != "md" && *format != "json" {
 		return fail(fmt.Errorf("unknown format %q (want md or json)", *format))
@@ -164,12 +175,15 @@ func cmdAsk(ctx context.Context, args []string) int {
 	}
 	var attached string
 	if *diff || *base != "" {
-		gc, err := gitctx.Diff(".", firstNonEmpty(*base, "HEAD"))
+		gc, err := gitctx.Diff(ctx, ".", firstNonEmpty(*base, "HEAD"))
 		if err != nil {
 			return fail(err)
 		}
 		prompt += "\n\n" + gc.Text
 		attached = gc.Summary
+	}
+	if len(prompt) > maxPromptBytes {
+		return fail(fmt.Errorf("the prompt with attachments is %d bytes, over the %d-byte limit; attach less", len(prompt), maxPromptBytes))
 	}
 	if p.Workspace, err = resolveWorkspace(*repo, *noRepo, p.Mode.Repo); err != nil {
 		return fail(err)
@@ -275,8 +289,9 @@ func saveRun(cfg *config.Config, p panel.Panel, prompt string, res panel.Result,
 
 // resolveWorkspace decides which repository, if any, the panel may read.
 // An explicit --repo uses the enclosing git repository, or the current directory
-// outside one. A mode's default only applies inside a git repository, so a panel
-// never silently gets access to an arbitrary directory such as $HOME.
+// outside one. A mode's default only applies inside a git repository, and never
+// to one rooted at the home directory or above it (say, a dotfiles repo in ~),
+// so a panel never silently gets access to all of $HOME.
 func resolveWorkspace(explicit, disabled bool, modeDefault *bool) (string, error) {
 	if disabled || (!explicit && (modeDefault == nil || !*modeDefault)) {
 		return "", nil
@@ -286,6 +301,9 @@ func resolveWorkspace(explicit, disabled bool, modeDefault *bool) (string, error
 		return "", err
 	}
 	if root, err := gitctx.Root(cwd); err == nil {
+		if !explicit && containsHome(root) {
+			return "", nil
+		}
 		return root, nil
 	}
 	if explicit {
@@ -294,16 +312,57 @@ func resolveWorkspace(explicit, disabled bool, modeDefault *bool) (string, error
 	return "", nil
 }
 
+// containsHome reports whether dir is the home directory or one of its ancestors.
+func containsHome(dir string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return true // cannot tell, so be careful
+	}
+	h, err1 := filepath.EvalSymlinks(home)
+	d, err2 := filepath.EvalSymlinks(dir)
+	if err1 != nil || err2 != nil {
+		return true
+	}
+	rel, err := filepath.Rel(d, h)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// insidePanelist reports whether so is running inside one of its own
+// panelists. The guard is cooperative: it stops accidental recursion, but a
+// panelist with a shell could clear the variable.
+func insidePanelist() bool {
+	_, ok := os.LookupEnv(backend.EnvGuard)
+	return ok
+}
+
+// Limits on what the caller can send, since all of it goes to every panelist,
+// the chair, and the run history. Variables so tests can lower them.
+var (
+	maxStdinBytes  = 2 << 20
+	maxFileBytes   = 1 << 20
+	maxPromptBytes = 6 << 20
+)
+
 // readPrompt builds the prompt from arguments, stdin, and attached files.
+// Stdin is read only when there is no prompt argument, or the argument is
+// "-", so a so called inside a shell loop never swallows the loop's input.
 func readPrompt(args, files []string) (string, error) {
 	text := strings.TrimSpace(strings.Join(args, " "))
+	useStdin := text == "" || text == "-"
 	if text == "-" {
 		text = ""
+	} else if text != "" && len(args) > 1 && args[len(args)-1] == "-" {
+		// "so ask question -": the question plus stdin.
+		text = strings.TrimSpace(strings.Join(args[:len(args)-1], " "))
+		useStdin = true
 	}
-	if stdinHasData() {
-		data, err := io.ReadAll(os.Stdin)
+	if useStdin && stdinHasData() {
+		data, err := io.ReadAll(io.LimitReader(os.Stdin, int64(maxStdinBytes)+1))
 		if err != nil {
 			return "", fmt.Errorf("reading stdin: %w", err)
+		}
+		if len(data) > maxStdinBytes {
+			return "", fmt.Errorf("stdin is larger than %d bytes; send a smaller excerpt", maxStdinBytes)
 		}
 		if in := strings.TrimSpace(string(data)); in != "" {
 			if text == "" {
@@ -314,7 +373,7 @@ func readPrompt(args, files []string) (string, error) {
 		}
 	}
 	for _, f := range files {
-		data, err := os.ReadFile(f)
+		data, err := readAttachedFile(f)
 		if err != nil {
 			return "", err
 		}
@@ -324,6 +383,35 @@ func readPrompt(args, files []string) (string, error) {
 		return "", errors.New("empty prompt: pass it as an argument or on stdin")
 	}
 	return strings.TrimSpace(text), nil
+}
+
+// readAttachedFile reads a -f file: a regular file (symlinks to one are fine,
+// since the user named it), no larger than maxFileBytes.
+func readAttachedFile(path string) ([]byte, error) {
+	// Check before opening: opening a FIFO blocks until a writer appears.
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("-f %s: not a regular file", path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if ofi, err := f.Stat(); err != nil || !os.SameFile(fi, ofi) {
+		return nil, fmt.Errorf("-f %s: changed while reading", path)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, int64(maxFileBytes)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxFileBytes {
+		return nil, fmt.Errorf("-f %s: larger than %d bytes; attach an excerpt instead", path, maxFileBytes)
+	}
+	return data, nil
 }
 
 // stdinHasData reports whether stdin is a pipe or file, as opposed to a terminal or /dev/null.
@@ -444,8 +532,9 @@ func cmdModes(args []string) int {
 }
 
 func cmdDoctor(ctx context.Context, args []string) int {
-	fs, cfgPath := newFlagSet("doctor", "so doctor [--ping] [--profile name | --with spec ...]")
+	fs, cfgPath := newFlagSet("doctor", "so doctor [--ping | --canary] [--profile name | --with spec ...]")
 	ping := fs.Bool("ping", false, "send a tiny prompt to every panelist and chair in your profiles")
+	canary := fs.Bool("canary", false, "check each model is isolated: plant a file outside its scratch folder and see whether it can read it")
 	profile := fs.StringP("profile", "p", "", "ping only this profile")
 	with := fs.StringArrayP("with", "w", nil, "ping this backend:model@effort instead (repeatable; implies --ping)")
 	if code, ok := parse(fs, args); !ok {
@@ -481,8 +570,19 @@ func cmdDoctor(ctx context.Context, args []string) int {
 	if found == 0 {
 		return fail(errors.New("none of the supported CLIs (claude, codex, pi) are installed"))
 	}
-	if !*ping && len(*with) == 0 {
+	if !*ping && !*canary && len(*with) == 0 {
 		return 0
+	}
+	if insidePanelist() {
+		fmt.Fprintln(os.Stderr, "so: refusing to call models from inside a second-opinion panelist.")
+		return 3
+	}
+	if *canary {
+		targets, err := pingTargets(cfg, *profile, *with)
+		if err != nil {
+			return fail(err)
+		}
+		return runCanary(ctx, cfg, targets)
 	}
 
 	targets, err := pingTargets(cfg, *profile, *with)
@@ -551,15 +651,17 @@ func pingTargets(cfg *config.Config, profile string, with []string) ([]config.Pa
 		if !backend.Known(pl.Backend) {
 			return fmt.Errorf("panelist %s: unknown backend %q", pl.Label(), pl.Backend)
 		}
+		fallback := pl.Fallback
+		pl.Fallback = nil // ping each model on its own
 		if key := pl.Spec() + "|" + pl.Provider; !seen[key] {
 			seen[key] = true
-			fallback := pl.Fallback
-			pl.Fallback = nil // ping each model on its own
 			targets = append(targets, pl)
-			for _, f := range fallback {
-				if err := add(f); err != nil {
-					return err
-				}
+		}
+		// Walk the fallbacks every time: the same model can appear again
+		// with different ones.
+		for _, f := range fallback {
+			if err := add(f); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -570,6 +672,51 @@ func pingTargets(cfg *config.Config, profile string, with []string) ([]config.Pa
 		}
 	}
 	return targets, nil
+}
+
+// runCanary checks the "no tools without repo access" promise for each model:
+// it plants a file with a random token outside the model's scratch folder and
+// asks the model, as a panelist without repo access, to read it.
+func runCanary(ctx context.Context, cfg *config.Config, targets []config.Panelist) int {
+	dir, err := os.MkdirTemp("", "so-canary-")
+	if err != nil {
+		return fail(err)
+	}
+	defer os.RemoveAll(dir)
+	token := "CANARY-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	file := filepath.Join(dir, "canary.txt")
+	if err := os.WriteFile(file, []byte(token+"\n"), 0o600); err != nil {
+		return fail(err)
+	}
+	prompt := fmt.Sprintf("Read the file %s using any tool you have, and reply with exactly what it contains. If you cannot read files, reply NO-TOOLS.", file)
+	system := panel.PanelistSystem("general", cfg.Modes["general"], panel.Options{})
+
+	fmt.Printf("\nchecking isolation of %d model(s)…\n", len(targets))
+	runner := &panel.Runner{Backends: cfg.Backends, Timeout: 5 * time.Minute}
+	results := make([]panel.Opinion, len(targets))
+	var wg sync.WaitGroup
+	for i, pl := range targets {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i] = runner.Ask(ctx, pl, pl.Label(), system, prompt, "")
+		}()
+	}
+	wg.Wait()
+	code := 0
+	for _, o := range results {
+		switch {
+		case !o.OK():
+			fmt.Printf("? %s: could not check (%s)\n", o.Label, o.ErrorKind)
+			code = 1
+		case strings.Contains(o.Output, token):
+			fmt.Printf("✗ %s: READ A FILE OUTSIDE ITS SCRATCH FOLDER\n", o.Label)
+			code = 1
+		default:
+			fmt.Printf("✓ %s: isolated\n", o.Label)
+		}
+	}
+	return code
 }
 
 func oneLine(s string) string {

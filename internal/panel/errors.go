@@ -12,6 +12,7 @@ import (
 type ErrorKind string
 
 const (
+	KindContext   ErrorKind = "context"   // the prompt is too long for the model
 	KindQuota     ErrorKind = "quota"     // usage or rate limit, or the provider is overloaded
 	KindAuth      ErrorKind = "auth"      // not signed in, or credentials rejected
 	KindModel     ErrorKind = "model"     // unknown, retired, or unsupported model
@@ -21,12 +22,14 @@ const (
 )
 
 // The CLIs report failures as free text, so classification matches common
-// phrasings and HTTP status codes. Order matters: a quota message can mention
-// the user's plan or login, so quota is checked before auth.
+// phrasings and HTTP status codes. Order matters: "token limit exceeded" is a
+// context error, not a quota one, and a quota message can mention the user's
+// plan or login, so quota is checked before auth.
 var kindPatterns = []struct {
 	kind ErrorKind
 	re   *regexp.Regexp
 }{
+	{KindContext, regexp.MustCompile(`(?i)context (length|window)|prompt is too long|input is too long|maximum context|too many (input )?tokens|token limit`)},
 	{KindQuota, regexp.MustCompile(`(?i)rate.?limit|too many requests|\b429\b|quota|usage limit|limit (reached|exceeded)|insufficient (credit|balance|funds)|credit balance|out of credits|overloaded|\b529\b|\b503\b|capacity`)},
 	{KindAuth, regexp.MustCompile(`(?i)not logged in|please (log|sign) ?in|/login|unauthori[sz]ed|\b401\b|\b403\b|authenticat|invalid (api )?key|api key|credential|(token|session) (has )?expired|forbidden`)},
 	{KindModel, regexp.MustCompile(`(?i)retired|deprecated|model.{0,40}(not found|does not exist|not supported|not available|unavailable|unknown|invalid)|(unknown|invalid|unsupported|no such) model|issue with the selected model|unrecogni[sz]ed.?model|\b404\b|\b410\b`)},
@@ -56,6 +59,8 @@ func (k ErrorKind) Hint() string {
 		return "The backend CLI is not signed in or its credentials were rejected. Ask the user to sign in (claude auth login, codex login, or the pi provider's login)."
 	case KindModel:
 		return "The model is unknown, retired, or unsupported. Update the profile; `so doctor --with backend:model` tests a replacement."
+	case KindContext:
+		return "The prompt is too long for this model. Attach less, for example a narrower --base or fewer -f files."
 	case KindTimeout:
 		return "The model did not finish in time. Retry with a longer --timeout or a lower effort."
 	}

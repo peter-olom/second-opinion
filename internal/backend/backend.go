@@ -7,10 +7,10 @@
 package backend
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -107,13 +107,54 @@ func run(ctx context.Context, name string, o Options, dir string, args []string,
 	// Last so configured env cannot override it: exec uses the last value for a duplicate key.
 	cmd.Env = append(cmd.Env, EnvGuard+"=1")
 	cmd.Stdin = strings.NewReader(stdin)
-	stdout := &cappedBuffer{limit: maxStdout}
-	stderr := &cappedBuffer{limit: maxStderr}
-	cmd.Stdout, cmd.Stderr = stdout, stderr
-	killProcessGroupOnCancel(cmd)
+	stdout := &headBuffer{limit: maxStdout}
+	stderr := &tailBuffer{limit: maxStderr}
+	isolateProcessGroup(cmd)
 	cmd.WaitDelay = 5 * time.Second
 
-	err := cmd.Run()
+	// so owns the output pipes, so waiting for the CLI to exit does not also
+	// wait for helpers it left behind holding them open. Once it exits, its
+	// process group is killed and the output is read to the end.
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	errR, errW, err := os.Pipe()
+	if err != nil {
+		outR.Close()
+		outW.Close()
+		return nil, err
+	}
+	cmd.Stdout, cmd.Stderr = outW, errW
+	copied := make(chan struct{}, 2)
+	drain := func(r *os.File, w io.Writer) {
+		io.Copy(w, r)
+		copied <- struct{}{}
+	}
+	go drain(outR, stdout)
+	go drain(errR, stderr)
+
+	err = cmd.Start()
+	outW.Close() // the CLI holds its own copies
+	errW.Close()
+	if err == nil {
+		err = cmd.Wait()
+	}
+	killProcessGroup(cmd)
+	// Anything outside the group (a daemonised helper) could hold a pipe
+	// open; stop reading after a grace period rather than hang.
+	grace := time.After(5 * time.Second)
+	for range 2 {
+		select {
+		case <-copied:
+		case <-grace:
+			outR.Close()
+			errR.Close()
+			<-copied
+		}
+	}
+	outR.Close()
+	errR.Close()
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			if errors.Is(ctxErr, context.DeadlineExceeded) {
@@ -136,27 +177,12 @@ func run(ctx context.Context, name string, o Options, dir string, args []string,
 	return stdout.Bytes(), nil
 }
 
-const (
+// Output limits, so a runaway CLI cannot exhaust memory. Variables so tests
+// can lower them.
+var (
 	maxStdout = 16 << 20
 	maxStderr = 1 << 20
 )
-
-// cappedBuffer keeps the first limit bytes written to it and discards the rest,
-// so a runaway CLI cannot exhaust memory.
-type cappedBuffer struct {
-	bytes.Buffer
-	limit     int
-	truncated bool
-}
-
-func (b *cappedBuffer) Write(p []byte) (int, error) {
-	if room := b.limit - b.Len(); len(p) > room {
-		b.truncated = true
-		b.Buffer.Write(p[:max(room, 0)])
-		return len(p), nil
-	}
-	return b.Buffer.Write(p)
-}
 
 // tail returns the last n lines of s, trimmed.
 func tail(s string, n int) string {

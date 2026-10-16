@@ -33,7 +33,7 @@ func newFixture(t *testing.T) fixture {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
 	t.Setenv("SECOND_OPINION_CONFIG", "")
 	t.Setenv("PATH", filepath.Join(home, "bin"))
-	t.Setenv(backend.EnvGuard, "")
+	unsetEnv(t, backend.EnvGuard)
 
 	for _, d := range []string{".claude/skills/second-opinion", ".claude/skills/other-skill", ".pi/agent/skills/second-opinion", "state/second-opinion/runs", "config/second-opinion", "bin"} {
 		mkdir(t, filepath.Join(home, d))
@@ -1130,4 +1130,13 @@ func TestUninstallNotesKeptTargetOfRemovedLink(t *testing.T) {
 	if !strings.Contains(out, "so is still on your PATH at "+target+" (the binary the removed link pointed to)") {
 		t.Errorf("the kept target on PATH should be reported:\n%s", out)
 	}
+}
+
+// unsetEnv removes an environment variable for the test, restoring it after.
+func unsetEnv(t *testing.T, key string) {
+	t.Helper()
+	if v, ok := os.LookupEnv(key); ok {
+		t.Cleanup(func() { os.Setenv(key, v) })
+	}
+	os.Unsetenv(key)
 }

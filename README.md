@@ -133,33 +133,55 @@ The caller always writes the prompt. There are two ways to give the panel more c
 
 - **`--diff` / `--base <ref>`** attaches the git diff and the full current contents of every changed
   and untracked file. `--diff` covers uncommitted changes. `--base main` covers everything since the
-  branch left `main`, via the merge-base, so `main`'s later commits are excluded. Binary and very
-  large files are listed but not attached.
+  branch left `main`, via the merge-base, so `main`'s later commits are excluded. Only regular files
+  are attached: symlinks are never followed, and binary, very large, or special files are listed but
+  not attached. Git's textconv and external diff drivers are off, so a driver that decrypts files
+  can't put plaintext in the diff. Limits: 1 MB of diff, 256 KB per file, 1.5 MB of files in total.
+- **`-f <file>` and stdin.** `-f` attaches a regular file of up to 1 MB. Stdin (up to 2 MB) is read
+  only when there is no prompt argument, or when the arguments end with `-`:
+  `git diff | so ask -m review "Review this" -`. The whole prompt is capped at 6 MB.
 - **Repository access** runs the panel and the chair in the repository root with read-only tools,
-  so they can read callers, definitions, and tests. The `review` and `debug` modes enable it by
-  default (`repo = true` in the mode), but only inside a git repository. `--repo` turns it on for
-  any mode and `--no-repo` turns it off.
+  so they can read callers, definitions, and tests, including ignored files such as `.env`. The
+  `review` and `debug` modes enable it by default (`repo = true` in the mode), but only inside a git
+  repository that isn't rooted at your home directory (a dotfiles repo in `~` doesn't count).
+  `--repo` turns it on for any mode and `--no-repo` turns it off.
+
+Everything you send goes to the model providers in your profiles. Treat a prompt, its attachments,
+and (with repository access) whatever the panel reads as shared with them.
 
 ## How models are invoked
 
-Each panelist runs headless with no MCP servers, no user config, and no saved session. Without repo
-access it also has no tools and runs in an empty temporary directory, so it answers only from the
-prompt.
+Each panelist runs headless with no MCP servers and no saved session, in an empty temporary
+directory (or the repository root, with repo access). No backend can modify files. What each one can
+reach differs, and these are the tested guarantees:
 
-| backend | no repo access | with repo access |
+| backend | without repo access | with repo access |
 |---|---|---|
-| claude | `--tools ""` | `--tools Read,Grep,Glob` in the repo; reads outside it are denied |
-| codex | `--sandbox read-only` in an empty dir | `--sandbox read-only --cd <repo>`; can run read-only commands such as `rg` and `git log` |
-| pi | `--no-tools --no-context-files` | `--tools read,grep,find,ls` in the repo |
+| claude | No tools at all (`--tools ""`). | `Read`, `Grep`, `Glob` only. Reads outside the repository are denied. |
+| codex | Every Codex feature except networking is disabled, including **connected apps** (Gmail, GitHub, Jira, …), browser and computer use, sub-agents, image generation, and web search; so are its shell tools. Codex has no switch that guarantees no tools at all, so a read-only command path may occasionally remain. | The same, but with read-only commands enabled so it can explore the repository. Those can read any file you can read, not just the repository. |
+| pi | No tools (`--no-tools`) and no context files. | `read`, `grep`, `find`, `ls`, which are not confined to the repository. pi also loads `AGENTS.md` context files from the repository, its parent folders, and `~/.pi/agent`. |
 
-All three use `--print` or `exec` with no saved session. Claude also gets `--setting-sources "" --strict-mcp-config`,
-codex gets `--ignore-user-config --ignore-rules`, and pi gets `--no-extensions --no-skills --no-approve`.
+Claude also gets `--setting-sources "" --strict-mcp-config` (your `CLAUDE.md` memory files may still
+load), codex gets `--ignore-user-config --ignore-rules`, and pi gets `--no-extensions --no-skills
+--no-approve` (your pi settings, such as the default model, still apply). Every panelist is told not
+to use tools without repo access.
 
-No backend can modify files. Claude can't read outside the repository. Codex's read-only sandbox
-and pi's read tools do not confine reads to the repository.
+`so doctor --canary` checks these guarantees on your machine: it plants a file outside each model's
+scratch folder and reports whether the model managed to read it.
 
-`so` sets `SECOND_OPINION_DEPTH=1` for every panelist and refuses to run when that variable is set.
-Only the top-level caller can start a panel.
+`so` sets `SECOND_OPINION_DEPTH=1` for every panelist and refuses to start a panel, ping models, or
+uninstall when that variable is present. This stops accidental recursion; it is cooperative, so a
+panelist with a shell could get around it.
+
+Each CLI runs in its own process group, which is killed after the CLI exits (taking any helpers with
+it) and when `so` is interrupted or its terminal closes. On Linux, panelists also die if `so` is
+killed outright. On macOS, `kill -9` of `so` can leave a panelist running. On Windows, only the CLI
+process itself is stopped, and the backends are less tested (npm-installed CLIs run through `.cmd`
+shims, which may mangle multi-line arguments).
+
+Each model call gets the full timeout. The chair starts after the panel finishes, and each fallback
+gets its own timeout too, so a run can take about twice the timeout or more. Panelists with repo
+access and a shell (codex, pi) can read your run history in `~/.local/state/second-opinion`.
 
 ## Configuration
 
@@ -206,6 +228,9 @@ panelists = [
     fallback = [{ backend = "pi", model = "ollama/glm-5.3:cloud", effort = "high" }] },
 ]
 ```
+
+A fallback can be a model already on the panel; the panel then has two seats for it. Prefer
+fallbacks from a provider not already in that profile.
 
 If you leave out `model`, the CLI uses its own default. `effort` is passed to the CLI's effort or
 thinking setting. Claude and Codex accept `low` to `max`, and pi also accepts `off` and `minimal`.

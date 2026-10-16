@@ -104,3 +104,15 @@ func TestQuotaWithoutFallbackFails(t *testing.T) {
 		t.Errorf("op = %+v, want a quota failure", op)
 	}
 }
+
+func TestClassifyContextBeforeQuota(t *testing.T) {
+	for _, msg := range []string{
+		"claude: error: prompt is too long: 250000 tokens > 200000 maximum",
+		"codex: ERROR: Your input exceeds the context window of this model",
+		"pi: 400 token limit exceeded",
+	} {
+		if got := classify(errors.New(msg)); got != KindContext {
+			t.Errorf("classify(%q) = %s, want context", msg, got)
+		}
+	}
+}

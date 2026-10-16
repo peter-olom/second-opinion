@@ -14,7 +14,7 @@ const panelistPreamble = `You are one member of a panel giving an independent se
 - Be specific and concrete. Prefer actionable points to general advice. No filler and no flattery.
 - Your response goes back to the caller agent, not directly to the human.%s`
 
-const noAccess = `- You have no tools and no access to the caller's files, repository, or conversation. Everything you know is in the request. If something important is missing, say what it is and state the assumptions you are making instead of refusing.`
+const noAccess = `- Answer only from the request. Do not use tools, run commands, or read files, even if some are available to you: you have no access to the caller's files, repository, or conversation, and everything you need is in the request. If something important is missing, say what it is and state the assumptions you are making instead of refusing.`
 
 const repoAccess = `- Your working directory is the caller's repository (%s), and you have read-only tools to search and read it. Use them to verify claims and to read the code around what the request points to: callers, definitions, types, and tests. Stay focused on the request rather than surveying the whole codebase. You cannot modify anything, and you cannot see the caller's conversation beyond the request.`
 
@@ -108,7 +108,14 @@ func ChairPrompt(request string, opinions []Opinion) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "<request>\n%s\n</request>\n", strings.TrimSpace(request))
 	for _, o := range opinions {
-		fmt.Fprintf(&b, "\n<response panelist=%q>\n%s\n</response>\n", o.Label, strings.TrimSpace(o.Output))
+		fmt.Fprintf(&b, "\n<response panelist=%q>\n%s\n</response>\n", o.Label, neutralizeTags(strings.TrimSpace(o.Output)))
 	}
 	return b.String()
+}
+
+// neutralizeTags stops a panelist's text from opening or closing a response
+// block in the chair's prompt, which could forge another panelist's answer.
+func neutralizeTags(s string) string {
+	r := strings.NewReplacer("<response", "&lt;response", "</response", "&lt;/response", "<request", "&lt;request", "</request", "&lt;/request")
+	return r.Replace(s)
 }

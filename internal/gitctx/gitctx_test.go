@@ -1,11 +1,13 @@
 package gitctx
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func run(t *testing.T, dir string, args ...string) {
@@ -46,7 +48,7 @@ func TestDiffUncommitted(t *testing.T) {
 	write(t, dir, "blob.bin", "\x00\x01\x02")
 	os.Remove(filepath.Join(dir, "gone.go"))
 
-	ctx, err := Diff(dir, "HEAD")
+	ctx, err := Diff(context.Background(), dir, "HEAD")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +80,7 @@ func TestDiffAgainstBranchUsesMergeBase(t *testing.T) {
 	run(t, dir, "commit", "-q", "-m", "main work")
 	run(t, dir, "checkout", "-q", "feature")
 
-	ctx, err := Diff(dir, "main")
+	ctx, err := Diff(context.Background(), dir, "main")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,13 +97,139 @@ func TestDiffAgainstBranchUsesMergeBase(t *testing.T) {
 
 func TestDiffErrors(t *testing.T) {
 	dir := newRepo(t)
-	if _, err := Diff(dir, "HEAD"); err == nil || !strings.Contains(err.Error(), "no changes") {
+	if _, err := Diff(context.Background(), dir, "HEAD"); err == nil || !strings.Contains(err.Error(), "no changes") {
 		t.Errorf("clean tree: err = %v, want no changes", err)
 	}
-	if _, err := Diff(dir, "nope"); err == nil || !strings.Contains(err.Error(), "unknown base") {
+	if _, err := Diff(context.Background(), dir, "nope"); err == nil || !strings.Contains(err.Error(), "unknown base") {
 		t.Errorf("bad base: err = %v", err)
 	}
-	if _, err := Diff(t.TempDir(), "HEAD"); err == nil || !strings.Contains(err.Error(), "git repository") {
+	if _, err := Diff(context.Background(), t.TempDir(), "HEAD"); err == nil || !strings.Contains(err.Error(), "git repository") {
 		t.Errorf("outside repo: err = %v", err)
+	}
+}
+
+func TestDiffNeverFollowsSymlinks(t *testing.T) {
+	dir := newRepo(t)
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	write(t, filepath.Dir(outside), "secret.txt", "OUTSIDE-SECRET")
+	// An untracked symlink to a file outside the repo, and one to an ignored .env inside it.
+	write(t, dir, ".gitignore", ".env\n")
+	write(t, dir, ".env", "INSIDE-SECRET")
+	if err := os.Symlink(outside, filepath.Join(dir, "innocent.txt")); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	os.Symlink(filepath.Join(dir, ".env"), filepath.Join(dir, "config.txt"))
+
+	ctx, err := Diff(context.Background(), dir, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"OUTSIDE-SECRET", "INSIDE-SECRET"} {
+		if strings.Contains(ctx.Text, secret) {
+			t.Errorf("symlink target %s was attached:\n%s", secret, ctx.Text)
+		}
+	}
+	if !strings.Contains(ctx.Text, "innocent.txt (symlink, not followed)") {
+		t.Errorf("skipped symlink should be listed:\n%s", ctx.Text)
+	}
+}
+
+func TestDiffSkipsFIFOWithoutHanging(t *testing.T) {
+	// Git never lists an untracked FIFO, but it does report a tracked file
+	// that has been replaced by one. Reading it would block forever.
+	dir := newRepo(t)
+	os.Remove(filepath.Join(dir, "a.go"))
+	if err := mkfifo(filepath.Join(dir, "a.go")); err != nil {
+		t.Skip("FIFOs unavailable:", err)
+	}
+	type result struct {
+		text string
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		ctx, err := Diff(context.Background(), dir, "HEAD")
+		done <- result{ctx.Text, err}
+	}()
+	select {
+	case r := <-done:
+		// Either git refuses the FIFO outright ("unsupported file type") or
+		// it is listed as not attached; both are safe.
+		if r.err == nil && !strings.Contains(r.text, "a.go (not a regular file)") {
+			t.Errorf("FIFO should be listed as not attached:\n%s", r.text)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Diff hung on a FIFO")
+	}
+}
+
+func TestDiffBoundsSizes(t *testing.T) {
+	defer func(f, total, omitted int) { maxFileBytes, maxFilesBytes, maxOmitted = f, total, omitted }(maxFileBytes, maxFilesBytes, maxOmitted)
+	maxFileBytes, maxFilesBytes, maxOmitted = 100, 250, 3
+	dir := newRepo(t)
+	write(t, dir, "big.txt", strings.Repeat("x", 101))
+	for _, name := range []string{"a.txt", "b.txt", "c.txt", "d.txt", "e.txt", "f.txt"} {
+		write(t, dir, name, strings.Repeat("y", 90))
+	}
+
+	ctx, err := Diff(context.Background(), dir, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ctx.Text, "big.txt (too large)") {
+		t.Errorf("oversized file should be skipped:\n%s", ctx.Text)
+	}
+	if n := strings.Count(ctx.Text, "<file path="); n != 2 {
+		t.Errorf("attached %d files, want 2 within the 250-byte budget", n)
+	}
+	if !strings.Contains(ctx.Text, "and 2 more") {
+		t.Errorf("omitted list should be capped at 3 names:\n%s", ctx.Text)
+	}
+}
+
+func TestDiffTruncatesLongDiff(t *testing.T) {
+	defer func(d int) { maxDiffBytes = d }(maxDiffBytes)
+	maxDiffBytes = 200
+	dir := newRepo(t)
+	write(t, dir, "a.go", "package a\n\n"+strings.Repeat("// long line of changes\n", 100))
+	ctx, err := Diff(context.Background(), dir, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff := ctx.Text[:strings.Index(ctx.Text, "</git-diff>")]
+	if !strings.Contains(diff, "[diff truncated]") || len(diff) > 400 {
+		t.Errorf("diff should be cut at the limit (%d bytes):\n%s", len(diff), diff)
+	}
+}
+
+func TestDiffDoesNotRunTextconv(t *testing.T) {
+	dir := newRepo(t)
+	marker := filepath.Join(t.TempDir(), "textconv-ran")
+	run(t, dir, "config", "diff.leak.textconv", "sh -c 'touch "+marker+"; echo DECRYPTED-SECRET'")
+	write(t, dir, ".gitattributes", "*.enc diff=leak\n")
+	write(t, dir, "s.enc", "ciphertext-1\n")
+	run(t, dir, "add", ".")
+	run(t, dir, "commit", "-q", "-m", "enc")
+	write(t, dir, "s.enc", "ciphertext-2\n")
+
+	ctx, err := Diff(context.Background(), dir, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ctx.Text, "DECRYPTED-SECRET") {
+		t.Errorf("textconv output was attached:\n%s", ctx.Text)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("the textconv driver ran")
+	}
+}
+
+func TestDiffCancels(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, "a.go", "package a\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := Diff(ctx, dir, "HEAD"); err == nil {
+		t.Error("a cancelled context should stop collection")
 	}
 }

@@ -53,11 +53,17 @@ func (p Panelist) Spec() string {
 	return s
 }
 
+var effortLevels = map[string]bool{
+	"off": true, "none": true, "minimal": true, "low": true, "medium": true, "high": true, "xhigh": true, "max": true,
+}
+
 // ParseSpec parses "backend[:model][@effort]", e.g. "pi:ollama/glm-5.3:cloud@high".
 func ParseSpec(spec string) (Panelist, error) {
 	var p Panelist
 	s := spec
-	if i := strings.LastIndex(s, "@"); i >= 0 {
+	// Only a known level after the last "@" is an effort; model IDs can
+	// contain "@" themselves (for example claude-opus@20250514).
+	if i := strings.LastIndex(s, "@"); i >= 0 && effortLevels[s[i+1:]] {
 		p.Effort, s = s[i+1:], s[:i]
 	}
 	p.Backend, p.Model, _ = strings.Cut(s, ":")
@@ -240,8 +246,8 @@ func (c *Config) validate() error {
 	if _, err := c.TimeoutDuration(); err != nil {
 		return err
 	}
-	if c.HistoryDays < 0 {
-		return fmt.Errorf("history_days must be positive (set history = false to turn history off)")
+	if c.HistoryDays < 0 || c.HistoryDays > 36500 {
+		return fmt.Errorf("history_days must be between 1 and 36500 (set history = false to turn history off)")
 	}
 	if c.DefaultProfile != "" {
 		if _, ok := c.Profiles[c.DefaultProfile]; !ok {
@@ -254,6 +260,17 @@ func (c *Config) validate() error {
 	for name, p := range c.Profiles {
 		if len(p.Panelists) == 0 {
 			return fmt.Errorf("profile %q has no panelists", name)
+		}
+		all := p.Panelists
+		if p.Chair != nil {
+			all = append(all[:len(all):len(all)], *p.Chair)
+		}
+		for _, pl := range all {
+			for _, f := range pl.Fallback {
+				if len(f.Fallback) > 0 {
+					return fmt.Errorf("profile %q: fallbacks cannot have fallbacks of their own; list them all on %s", name, pl.Label())
+				}
+			}
 		}
 		if p.Mode != "" {
 			if _, ok := c.Modes[p.Mode]; !ok {
@@ -317,6 +334,9 @@ func (c *Config) TimeoutDuration() (time.Duration, error) {
 	d, err := time.ParseDuration(c.Timeout)
 	if err != nil {
 		return 0, fmt.Errorf("invalid timeout %q: %w", c.Timeout, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("timeout %q must be positive", c.Timeout)
 	}
 	return d, nil
 }

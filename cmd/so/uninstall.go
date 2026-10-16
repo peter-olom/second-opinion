@@ -13,7 +13,6 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/peter-olom/second-opinion/internal/backend"
 	"github.com/peter-olom/second-opinion/internal/history"
 )
 
@@ -46,7 +45,7 @@ func cmdUninstall(ctx context.Context, args []string) int {
 	if code, ok := parse(flags, args); !ok {
 		return code
 	}
-	if os.Getenv(backend.EnvGuard) != "" {
+	if insidePanelist() {
 		fmt.Fprintln(os.Stderr, "so: refusing to uninstall from inside a second-opinion panelist.")
 		return 3
 	}

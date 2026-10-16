@@ -24,12 +24,18 @@ panel has repository access, the code in the repository.
 - **`--diff` / `--base <ref>`.** Attaches the git diff plus the full current contents of every
   changed and untracked file. `--diff` alone covers uncommitted changes. `--base main` covers
   everything on this branch since it left `main`.
-- **`-f <file>` and stdin.** Attach specific files, logs, or output.
+- **`-f <file>` and stdin.** Attach specific files (up to 1 MB each), logs, or output. Stdin is
+  read only when there is no prompt argument, or when the arguments end with `-`.
 - **Repository access.** Panelists can read the current git repository with read-only tools, so they
-  can open callers, definitions, and tests. The `review` and `debug` modes turn this on
-  automatically inside a git repo. For other modes, use `--repo` to turn it on, and `--no-repo` to
-  turn it off in any mode. Repository access does not replace a good prompt. Point them at what
-  matters, because they will not guess what you changed or why.
+  can open callers, definitions, and tests. That includes ignored files such as `.env`, and codex
+  and pi panelists can read files outside the repository too. The `review` and `debug` modes turn
+  this on automatically inside a git repo (not one rooted at the home directory). For other modes,
+  use `--repo` to turn it on, and `--no-repo` to turn it off in any mode. Repository access does not
+  replace a good prompt. Point them at what matters, because they will not guess what you changed
+  or why.
+
+Everything you send goes to the user's model providers. Don't attach secrets, and don't turn on
+repository access in a repo with secrets the user hasn't agreed to share.
 
 ## Usage
 
@@ -48,6 +54,12 @@ EOF
 # Review this branch's work (diff + changed files attached, repo readable)
 so ask -p panel -m review --base main "Review this change. It adds ... Constraints: ..."
 
+# Pipe something in: end the arguments with - so stdin is attached
+go test ./... 2>&1 | so ask -m debug "These tests fail after my change to ... Why?" -
+
+# Audit the whole project before a release (no diff: the panel reads the repo)
+so ask -p panel -m audit "Audit this project. It does ... Users trust it to ..."
+
 # Review uncommitted changes
 so ask -m review --diff "I refactored the retry logic in ... Is it correct?"
 
@@ -59,14 +71,21 @@ Options: `-p/--profile`, `-m/--mode`, `--diff`, `--base <ref>`, `--repo`, `--no-
 `-f/--file` (repeatable), `-w/--with backend:model@effort` (ad-hoc panelists instead of a profile,
 repeatable), `--no-chair`, `--reveal`, `--format md|json`, `--timeout 20m`.
 
-Modes: `general` (default), `review` (code review), `plan` (design critique), `debug` (diagnosis).
-Run `so modes` for the current list, which may include user-defined modes.
+Modes: `general` (default), `review` (code review), `plan` (design critique), `debug` (diagnosis),
+`audit` (whole-project review). Run `so modes` for the current list, which may include user-defined
+modes.
+
+**Review scope.** A panel reviews what you point it at. A `review` of a diff that comes back clean
+says nothing about code outside the diff. Before a release, or when the user asks whether the
+project is sound, run an `audit` of the whole repository, and say which kind of review you ran
+when you report the result.
 
 ## Practicalities
 
 - A call takes from about 10 seconds to several minutes. High-effort panels with repository
-  access are the slowest. Give the command a long timeout (at least 15 minutes) and do not
-  start it again while it is still running.
+  access are the slowest, and audits slower still. Each model call gets the full `timeout`
+  (15 minutes by default), and the chair runs after the panel, so give the command at least
+  twice that, and do not start it again while it is still running.
 - The answer is markdown on stdout. Progress and errors go to stderr.
 - If one panelist fails, the others still return. The exit code is non-zero only if every panelist
   failed. Each failure shows a kind and a suggested fix:
@@ -76,7 +95,8 @@ Run `so modes` for the current list, which may include user-defined modes.
   - `model`: the model is unknown or retired. Offer to update the profile, and test the
     replacement with `so doctor --with`.
   - `timeout`: retry with a longer `--timeout` or lower effort.
-- `so` refuses to run from inside a panelist, so panels cannot recurse.
+  - `context`: the prompt is too long for the model; attach less.
+- `so` refuses to run from inside a panelist, to stop accidental recursion.
 
 ## Using the answer
 

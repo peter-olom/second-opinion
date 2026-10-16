@@ -201,3 +201,31 @@ func TestDefaultPathIgnoresRelativeXDG(t *testing.T) {
 		t.Errorf("absolute XDG_CONFIG_HOME: DefaultPath() = %q", got)
 	}
 }
+
+func TestValidationRejectsDangerousValues(t *testing.T) {
+	for name, body := range map[string]string{
+		"huge history_days": "history_days = 999999\n",
+		"zero timeout":      "timeout = \"0s\"\n",
+		"negative timeout":  "timeout = \"-5m\"\n",
+		"nested fallback": `[profiles.p]
+panelists = [{ backend = "pi", model = "a", fallback = [{ backend = "pi", model = "b", fallback = [{ backend = "pi", model = "c" }] }] }]
+`,
+	} {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		os.WriteFile(path, []byte(body), 0o644)
+		if _, err := Load(path); err == nil {
+			t.Errorf("%s: config should be rejected", name)
+		}
+	}
+}
+
+func TestParseSpecKeepsAtSignsInModelNames(t *testing.T) {
+	got, err := ParseSpec("claude:claude-opus@20250514")
+	if err != nil || got.Model != "claude-opus@20250514" || got.Effort != "" {
+		t.Errorf("ParseSpec = %+v, %v; the date is part of the model", got, err)
+	}
+	got, _ = ParseSpec("claude:claude-opus@20250514@high")
+	if got.Model != "claude-opus@20250514" || got.Effort != "high" {
+		t.Errorf("ParseSpec = %+v; want model with date and effort high", got)
+	}
+}

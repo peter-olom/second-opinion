@@ -132,3 +132,45 @@ func TestStateDirIgnoresRelativeXDG(t *testing.T) {
 		t.Errorf("absolute XDG_STATE_HOME: Dir() = %q", got)
 	}
 }
+
+func TestSaveNeverOverwritesOrFollowsLinks(t *testing.T) {
+	dir := t.TempDir()
+	r := record(time.Now())
+	if err := Save(dir, r, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(dir, r, time.Hour); err == nil {
+		t.Error("saving the same ID twice should fail rather than overwrite")
+	}
+	// A symlink planted at the next record's path must not be followed.
+	target := filepath.Join(t.TempDir(), "victim")
+	os.WriteFile(target, []byte("keep"), 0o644)
+	r2 := record(time.Now())
+	if err := os.Symlink(target, filepath.Join(dir, r2.ID+".json")); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	if err := Save(dir, r2, time.Hour); err == nil {
+		t.Error("Save followed a symlink")
+	}
+	if data, _ := os.ReadFile(target); string(data) != "keep" {
+		t.Error("the symlink target was overwritten")
+	}
+}
+
+func TestSaveTightensExistingDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "runs")
+	os.MkdirAll(dir, 0o755)
+	if err := Save(dir, record(time.Now()), time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(dir); fi.Mode().Perm() != 0o700 {
+		t.Errorf("history dir mode = %o, want 700", fi.Mode().Perm())
+	}
+}
+
+func TestIDsAreLongEnough(t *testing.T) {
+	id := NewID(time.Now())
+	if parts := strings.Split(id, "-"); len(parts) != 3 || len(parts[2]) != 8 {
+		t.Errorf("NewID = %q, want 8 hex characters of randomness", id)
+	}
+}

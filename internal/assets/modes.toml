@@ -140,6 +140,96 @@ Only questions that affect whether or how to fix something. "None." if there are
 An ordered checklist for the caller: findings to fix, tests to add, and questions to resolve.
 """
 
+[modes.audit]
+description = "Whole-project audit: what leaves the machine, broken promises, and risky paths"
+repo = true
+instructions = """
+Audit the whole project in the repository, not just a recent change. Read across the codebase:
+entry points, the paths user data takes, configuration, the docs, and any prompts the project sends.
+
+Look for, in priority order:
+1. Data leaving the machine or reaching the wrong place: what is sent, logged, stored, or shared,
+   and whether it can include more than the user intended (secrets, files outside scope, oversized
+   content).
+2. Broken promises: claims in the README, docs, help text, or prompts that the code does not keep.
+   Check each claim against the code that implements it.
+3. Security: injection, path handling, symlinks, permissions, untrusted input, and sandboxing.
+4. Resource and process safety: unbounded memory or time, cancellation, cleanup of subprocesses and
+   temporary files.
+5. Correctness of the core paths, and their tests: what is untested, and which tests cannot fail.
+
+Rules:
+- Each finding needs evidence from the code (file:line) and a concrete scenario where it goes wrong.
+- If the caller lists known issues, confirm or correct them briefly and spend your effort on the
+  ones not listed.
+- Use the review mode's severity scale (blocker, major, minor, nit) and verdicts (approve, approve
+  with fixes, request changes).
+"""
+format = """
+## Verdict
+**approve** | **approve with fixes** | **request changes**
+
+One or two sentences: what you understand the change to do, and the main reason for your verdict.
+
+## Findings
+Numbered R1, R2, … most severe first. Write "None." if there are none.
+
+### R1 · severity · category · confidence: high|medium|low: Short title
+- **Location:** `path:line` and the function or symbol
+- **Problem:** what is wrong
+- **Failure scenario:** the input, state, or sequence that triggers it, and what goes wrong
+- **Evidence:** what you checked (callers, definitions, tests), and what you could not verify
+- **Fix:** the specific change, with a short snippet if that makes it unambiguous
+
+Category is one of: correctness, security, data, contract, reliability, performance, tests, maintainability.
+
+## Test gaps
+Tests that are missing or wrong for the changed behavior, each with what it should assert. "None." if coverage is adequate.
+
+## Questions
+Assumptions you made and things you could not verify, phrased so the caller can answer or check them. "None." if there are none.
+
+## Coverage
+One line: what you reviewed, and anything relevant you did not get to.
+"""
+chair_instructions = """
+Merge the panel's audit findings into one list, validating each against the code. Keep confirmed
+and plausible findings, reject the ones that don't hold up, and re-rate severity on the panel's
+scale. Rank by impact. Derive the verdict from the merged findings: any blocker or major means
+request changes.
+"""
+chair_format = """
+## Verdict
+**approve** | **approve with fixes** | **request changes**
+
+One or two sentences on why.
+
+Panel: one line per panelist with its verdict and the findings behind it, e.g.
+`Panelist B: request changes (R1, R3)`.
+
+## Findings
+Merged and renumbered F1, F2, … most severe first. Write "None." if there are none.
+
+### F1 · severity · category · confirmed|plausible: Short title
+- **Location:** `path:line` and the function or symbol
+- **Problem:** what is wrong, and the failure scenario
+- **Fix:** the specific change
+- **Raised by:** panelist labels with their finding IDs, e.g. `Panelist A R2`, `Panelist C R1`
+- **Chair note:** severity changes, disagreements, or what you checked. Omit if there is nothing to add.
+
+## Rejected
+One line per rejected finding: panelist label and ID, title, and why it does not hold. "None." if nothing was rejected.
+
+## Test gaps
+Merged from the panel. "None." if there are none.
+
+## Open questions
+Only questions that affect whether or how to fix something. "None." if there are none.
+
+## Next steps
+An ordered checklist for the caller: findings to fix, tests to add, and questions to resolve.
+"""
+
 [modes.plan]
 description = "Critique of a plan, design, or approach before building it"
 instructions = """
