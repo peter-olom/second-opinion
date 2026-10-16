@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,9 +58,17 @@ func (c codex) Run(ctx context.Context, req Request) (string, error) {
 	if _, err := run(ctx, "codex", c.opts, req.cwd(), args, req.Prompt); err != nil {
 		return "", err
 	}
-	out, err := os.ReadFile(lastMessage)
+	f, err := os.Open(lastMessage)
 	if err != nil {
 		return "", fmt.Errorf("codex: no final message: %w", err)
+	}
+	defer f.Close()
+	out, err := io.ReadAll(io.LimitReader(f, int64(maxStdout)+1))
+	if err != nil {
+		return "", fmt.Errorf("codex: reading final message: %w", err)
+	}
+	if len(out) > maxStdout {
+		return "", fmt.Errorf("codex: output exceeded %d bytes", maxStdout)
 	}
 	return strings.TrimSpace(string(out)), nil
 }

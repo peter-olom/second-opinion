@@ -592,3 +592,38 @@ func TestDiffDuringMergeConflict(t *testing.T) {
 		t.Errorf("conflicted a.go attached %d times, want once:\n%s", n, ctx.Text)
 	}
 }
+
+func TestReadAttachmentStaysInsideTheRepo(t *testing.T) {
+	// A parent directory that is (or was swapped for) a symlink to somewhere
+	// outside the repository must not lead a read out of it.
+	dir := t.TempDir()
+	outside := t.TempDir()
+	write(t, outside, "secret.txt", "OUTSIDE-SECRET")
+	if err := os.Symlink(outside, filepath.Join(dir, "sub")); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	repo, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	data, why := readAttachment(repo, "sub/secret.txt", 1000)
+	if why == "" || strings.Contains(string(data), "OUTSIDE-SECRET") {
+		t.Errorf("read through a symlinked parent: %q (%q)", data, why)
+	}
+}
+
+func TestDiffSummaryNamesAttachedFiles(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, "a.go", "package a\n\nfunc A() int { return 3 }\n")
+	write(t, dir, "notes.md", "hello\n")
+	ctx, err := Diff(context.Background(), dir, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a.go", "notes.md"} {
+		if !strings.Contains(ctx.Summary, name) {
+			t.Errorf("summary %q should name %s", ctx.Summary, name)
+		}
+	}
+}

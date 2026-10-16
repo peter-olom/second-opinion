@@ -35,7 +35,14 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
       - run: go build ./cmd/so
-      - run: go test ./cmd/so -run "TestResolveConfigPathKeepsDriveRoot|TestResolveConfigPathRootedWithoutDrive|TestUninstallMovesRunningBinaryAsideOnWindows|TestUninstallNeverOverwritesOldBinaryOnWindows|TestUninstallOnWindowsRemovesOnlyTheLink" -v
+      - name: Windows-specific tests
+        shell: bash
+        run: |
+          go test ./cmd/so -count=1 -v -run "TestResolveConfigPathKeepsDriveRoot|TestResolveConfigPathRootedWithoutDrive|TestUninstallMovesRunningBinaryAsideOnWindows|TestUninstallNeverOverwritesOldBinaryOnWindows|TestUninstallOnWindowsRemovesOnlyTheLink" | tee test.log
+          passed=$(grep -c '^--- PASS' test.log)
+          echo "passed: $passed"
+          # Fail if a rename or typo made the filter match fewer tests.
+          [ "$passed" -eq 5 ]
 
   snapshot:
     runs-on: ubuntu-latest

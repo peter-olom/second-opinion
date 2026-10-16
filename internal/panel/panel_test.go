@@ -239,3 +239,24 @@ func TestChairPromptLeavesCodeUnchanged(t *testing.T) {
 		t.Errorf("code was altered on its way to the chair:\n%s", got)
 	}
 }
+
+func TestRedactHidesFailureDetails(t *testing.T) {
+	res := Result{Anonymous: true, Opinions: []Opinion{{
+		Label: "Panelist B", Error: "codex: exit status 1\nmodel gpt-6.1-sol is overloaded", ErrorKind: KindQuota,
+		Panelist: &config.Panelist{Backend: "codex", Model: "gpt-6.1-sol"},
+	}}}
+	res.Redact()
+	got := res.Opinions[0].Error
+	if strings.Contains(got, "codex") || strings.Contains(got, "gpt") || !strings.Contains(got, "failed (quota)") {
+		t.Errorf("redacted error = %q, want only the kind", got)
+	}
+}
+
+func TestChairWithoutRepoIsToldNotToUseTools(t *testing.T) {
+	if got := ChairSystem("review", config.Mode{}, Options{}); !strings.Contains(got, "Do not use tools") {
+		t.Errorf("chair prompt without repo access lacks the no-tools instruction:\n%s", got)
+	}
+	if got := ChairSystem("review", config.Mode{}, Options{Workspace: "/r"}); strings.Contains(got, "Do not use tools") {
+		t.Error("a chair with repo access should not be told to avoid tools")
+	}
+}

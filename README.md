@@ -81,8 +81,9 @@ Model names can bias the reader. A chair might favour its own model family, and 
 might trust a "bigger" model's verdict over a sound argument from a smaller one. Panels are
 therefore blind by default:
 
-- Each run labels panelists `Panelist A`, `B`, … with letters assigned at random. Neither a letter
-  nor a position maps to the same model twice. The chair is shown as `Chair`.
+- Each run labels panelists `Panelist A`, `B`, … with letters shuffled at random, so a letter or
+  position doesn't tell you which model it is. (With a single panelist, it is always `Panelist A`.)
+  The chair is shown as `Chair`.
 - The chair sees only these labels. Panelists are told not to identify themselves, and the chair is
   told not to guess who wrote what.
 - The output (markdown and JSON) and the progress lines use the same labels.
@@ -147,7 +148,7 @@ The caller always writes the prompt. There are two ways to give the panel more c
   `so` says so. The whole prompt is capped at 6 MB.
 - **Repository access** runs the panel and the chair in the repository root with read-only tools,
   so they can read callers, definitions, and tests, including ignored files such as `.env`. The
-  `review` and `debug` modes enable it by default (`repo = true` in the mode), but only inside a git
+  `review`, `debug` and `audit` modes enable it by default (`repo = true` in the mode), but only inside a git
   repository that isn't rooted at your home directory (a dotfiles repo in `~` doesn't count).
   `--repo` turns it on for any mode and `--no-repo` turns it off. Inside a home-rooted repository,
   `--repo` gives the panel the current folder rather than all of `$HOME`, and refuses in `$HOME`

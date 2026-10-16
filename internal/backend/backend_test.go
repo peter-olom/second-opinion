@@ -179,3 +179,58 @@ func TestCodexFeatureListRetriedAfterFailure(t *testing.T) {
 		t.Errorf("second listing = %v, %v; a failure must not be cached", names, err)
 	}
 }
+
+// argvOf runs a backend with a fake CLI that records its arguments.
+func argvOf(t *testing.T, b func(Options) Backend, workspace string) string {
+	t.Helper()
+	argsFile := filepath.Join(t.TempDir(), "args")
+	cli := script(t, "printf '%s\\n' \"$@\" > "+argsFile+"\ncat >/dev/null\necho '{\"result\":\"ok\"}'\n")
+	b(Options{Command: cli}).Run(context.Background(), Request{System: "sys", Prompt: "q", Dir: t.TempDir(), Workspace: workspace})
+	data, _ := os.ReadFile(argsFile)
+	return string(data)
+}
+
+func TestClaudeAndPiLockdownFlags(t *testing.T) {
+	repo := t.TempDir()
+	claudeB := func(o Options) Backend { return claude{o} }
+	piB := func(o Options) Backend { return pi{o} }
+	for _, tc := range []struct {
+		name      string
+		b         func(Options) Backend
+		workspace string
+		want      []string
+		notWant   []string
+	}{
+		{"claude, no repo", claudeB, "", []string{"--tools\n\n", "--strict-mcp-config", "--setting-sources\n\n", "--no-session-persistence", "--disable-slash-commands"}, []string{"Read,Grep,Glob"}},
+		{"claude, repo", claudeB, repo, []string{"--tools\nRead,Grep,Glob\n", "--strict-mcp-config", "--setting-sources\n\n"}, nil},
+		{"pi, no repo", piB, "", []string{"--no-tools", "--no-context-files", "--no-extensions", "--no-skills", "--no-approve", "--no-session"}, []string{"--tools"}},
+		{"pi, repo", piB, repo, []string{"--tools\nread,grep,find,ls\n", "--no-extensions", "--no-skills", "--no-approve"}, []string{"--no-tools"}},
+	} {
+		args := argvOf(t, tc.b, tc.workspace)
+		for _, w := range tc.want {
+			if !strings.Contains(args, w) {
+				t.Errorf("%s: missing %q in:\n%s", tc.name, w, args)
+			}
+		}
+		for _, nw := range tc.notWant {
+			if strings.Contains(args, nw) {
+				t.Errorf("%s: unexpected %q in:\n%s", tc.name, nw, args)
+			}
+		}
+	}
+}
+
+func TestCodexFinalMessageIsBounded(t *testing.T) {
+	codexFeatureList = featureCache{}
+	t.Cleanup(func() { codexFeatureList = featureCache{} })
+	defer func(n int) { maxStdout = n }(maxStdout)
+	maxStdout = 100
+	// A codex that writes a huge final message to --output-last-message.
+	cli := script(t, `if [ "$1" = features ]; then echo "apps stable true"; exit 0; fi
+while [ $# -gt 0 ]; do [ "$1" = --output-last-message ] && out=$2; shift; done
+head -c 5000 /dev/zero | tr '\0' x > "$out"`)
+	_, err := codex{Options{Command: cli}}.Run(context.Background(), Request{Prompt: "q", Dir: t.TempDir()})
+	if err == nil || !strings.Contains(err.Error(), "output exceeded") {
+		t.Errorf("err = %v, want the final message bounded", err)
+	}
+}

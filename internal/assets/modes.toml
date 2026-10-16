@@ -169,7 +169,7 @@ format = """
 ## Verdict
 **approve** | **approve with fixes** | **request changes**
 
-One or two sentences: what you understand the change to do, and the main reason for your verdict.
+One or two sentences: what you understand the project to do, and the main reason for your verdict.
 
 ## Findings
 Numbered R1, R2, … most severe first. Write "None." if there are none.

@@ -28,7 +28,7 @@ panel has repository access, the code in the repository.
   read only when there is no prompt argument, or when the arguments end with `-`.
 - **Repository access.** Panelists can read the current git repository with read-only tools, so they
   can open callers, definitions, and tests. That includes ignored files such as `.env`, and codex
-  and pi panelists can read files outside the repository too. The `review` and `debug` modes turn
+  and pi panelists can read files outside the repository too. The `review`, `debug` and `audit` modes turn
   this on automatically inside a git repo (not one rooted at the home directory). For other modes,
   use `--repo` to turn it on, and `--no-repo` to turn it off in any mode. Repository access does not
   replace a good prompt. Point them at what matters, because they will not guess what you changed

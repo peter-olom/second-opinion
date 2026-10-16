@@ -79,7 +79,7 @@ func ChairSystem(modeName string, m config.Mode, o Options) string {
 	if format == "" {
 		format = defaultChairFormat
 	}
-	anon, access := "", ""
+	anon, access := "", "\n"+noAccess
 	if o.Anonymous {
 		anon = chairAnonymous
 	}

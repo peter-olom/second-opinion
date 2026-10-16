@@ -17,7 +17,6 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -34,8 +33,8 @@ var (
 )
 
 // Root returns the top-level directory of the git repository containing dir.
-func Root(dir string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+func Root(ctx context.Context, dir string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	out, _, err := git(ctx, dir, 64<<10, "rev-parse", "--show-toplevel")
 	if err != nil {
@@ -54,10 +53,21 @@ type Context struct {
 // such as "main" the diff starts at the merge-base, so it shows this branch's
 // work (committed or not) and none of main's later commits.
 func Diff(ctx context.Context, dir, base string) (Context, error) {
-	root, err := Root(dir)
+	root, err := Root(ctx, dir)
 	if err != nil {
+		if ctx.Err() != nil {
+			return Context{}, ctx.Err()
+		}
 		return Context{}, errors.New("--diff needs to run inside a git repository")
 	}
+	// All attachment reads go through an os.Root, which resolves every path
+	// component inside the repository: a parent directory swapped for a
+	// symlink cannot lead a read outside it.
+	repo, err := os.OpenRoot(root)
+	if err != nil {
+		return Context{}, err
+	}
+	defer repo.Close()
 	if _, _, err := git(ctx, root, 64<<10, "rev-parse", "--verify", "--quiet", base+"^{commit}"); err != nil {
 		if ctx.Err() != nil {
 			return Context{}, ctx.Err()
@@ -155,7 +165,7 @@ func Diff(ctx context.Context, dir, base string) (Context, error) {
 	}
 	fmt.Fprintf(&b, "<git-diff base=%q>\n%s\n</git-diff>", baseDesc, strings.TrimRight(diff, "\n"))
 
-	var omitted []string
+	var omitted, attached []string
 	total := 0
 	// Filtered files that were deleted never reach attach; note them too.
 	isChanged := map[string]bool{}
@@ -176,12 +186,13 @@ func Diff(ctx context.Context, dir, base string) (Context, error) {
 			omitted = append(omitted, path+" (attachment budget exceeded)")
 			return
 		}
-		data, why := readAttachment(filepath.Join(root, path), min(maxFileBytes, maxFilesBytes-total))
+		data, why := readAttachment(repo, path, min(maxFileBytes, maxFilesBytes-total))
 		if why != "" {
 			omitted = append(omitted, path+" ("+why+")")
 			return
 		}
 		total += len(data)
+		attached = append(attached, path)
 		fmt.Fprintf(&b, "\n\n<file path=%q status=%q>\n%s\n</file>", path, status, strings.TrimRight(string(data), "\n"))
 	}
 	for _, p := range changed {
@@ -198,18 +209,26 @@ func Diff(ctx context.Context, dir, base string) (Context, error) {
 		}
 	}
 
-	n := len(changed) + len(untracked)
-	return Context{
-		Text:    b.String(),
-		Summary: fmt.Sprintf("diff vs %s, %d file%s", baseDesc, n, plural(n)),
-	}, nil
+	// Name what was sent, so the caller can see it.
+	summary := fmt.Sprintf("diff vs %s", baseDesc)
+	if len(attached) > 0 {
+		names := attached[:min(len(attached), 10)]
+		summary += fmt.Sprintf("; %d file%s attached: %s", len(attached), plural(len(attached)), strings.Join(names, ", "))
+		if rest := len(attached) - len(names); rest > 0 {
+			summary += fmt.Sprintf(", and %d more", rest)
+		}
+	}
+	if len(omitted) > 0 {
+		summary += fmt.Sprintf("; %d not attached", len(omitted))
+	}
+	return Context{Text: b.String(), Summary: summary}, nil
 }
 
-// readAttachment reads a file for attaching, or explains why it is not
-// attached. Only regular files are read, without following symlinks, and
-// never more than limit bytes.
-func readAttachment(path string, limit int) ([]byte, string) {
-	fi, err := os.Lstat(path)
+// readAttachment reads a file (a path relative to repo) for attaching, or
+// explains why it is not attached. Only regular files are read, without
+// following symlinks, and never more than limit bytes.
+func readAttachment(repo *os.Root, path string, limit int) ([]byte, string) {
+	fi, err := repo.Lstat(path)
 	switch {
 	case err != nil:
 		return nil, "unreadable"
@@ -222,7 +241,7 @@ func readAttachment(path string, limit int) ([]byte, string) {
 	case fi.Size() > int64(limit):
 		return nil, "attachment budget exceeded"
 	}
-	f, err := openNoFollow(path)
+	f, err := repo.Open(path)
 	if err != nil {
 		return nil, "unreadable"
 	}
@@ -251,6 +270,7 @@ func git(ctx context.Context, dir string, limit int, args ...string) (string, bo
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-c", "core.fsmonitor=false"}, args...)...)
 	cmd.Dir = dir
 	cmd.Env = append(gitEnv(), "GIT_OPTIONAL_LOCKS=0")
+	cmd.WaitDelay = 5 * time.Second // a filter helper holding stderr must not block Wait
 	var stderr limitedBuffer
 	stderr.limit = 64 << 10
 	cmd.Stderr = &stderr
@@ -344,6 +364,7 @@ func gitLines(ctx context.Context, dir string, limit int, fn func(string) bool, 
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-c", "core.fsmonitor=false"}, args...)...)
 	cmd.Dir = dir
 	cmd.Env = append(gitEnv(), "GIT_OPTIONAL_LOCKS=0")
+	cmd.WaitDelay = 5 * time.Second
 	var stderr limitedBuffer
 	stderr.limit = 64 << 10
 	cmd.Stderr = &stderr
@@ -427,6 +448,7 @@ func filteredPaths(ctx context.Context, root string, paths []string) (map[string
 	}
 	cmd := exec.CommandContext(ctx, "git", "-c", "core.fsmonitor=false", "check-attr", "-z", "--stdin", "filter")
 	cmd.Dir = root
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Env = append(gitEnv(), "GIT_OPTIONAL_LOCKS=0")
 	cmd.Stdin = strings.NewReader(strings.Join(paths, "\x00") + "\x00")
 	var out, stderr limitedBuffer

@@ -219,3 +219,38 @@ func TestCanaryReportsWhatModelsCanRead(t *testing.T) {
 		}
 	}
 }
+
+func TestEmptyArgumentNeverReadsStdin(t *testing.T) {
+	for _, arg := range []string{"", "   "} {
+		withStdin(t, "LOOP-INPUT\n")
+		got, err := readPrompt([]string{arg}, nil)
+		if strings.Contains(got, "LOOP-INPUT") {
+			t.Errorf("argument %q: stdin was read", arg)
+		}
+		if err == nil {
+			t.Errorf("argument %q: want an empty-prompt error", arg)
+		}
+	}
+}
+
+func TestDiffRefusedInHomeRootedRepo(t *testing.T) {
+	unsetEnv(t, backend.EnvGuard)
+	home := t.TempDir()
+	if out, err := exec.Command("git", "-C", home, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	sub := filepath.Join(home, "notes")
+	os.MkdirAll(sub, 0o755)
+	os.WriteFile(filepath.Join(home, ".netrc"), []byte("password HOME-SECRET"), 0o600)
+	t.Chdir(sub)
+	stderr := captureStderr(t, func() {
+		if code := run(context.Background(), []string{"ask", "--diff", "-w", "pi:x", "q"}); code != 1 {
+			t.Errorf("exit code = %d, want 1", code)
+		}
+	})
+	if !strings.Contains(stderr, "rooted at your home directory") {
+		t.Errorf("stderr = %q, want a refusal", stderr)
+	}
+}

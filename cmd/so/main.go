@@ -179,6 +179,12 @@ func cmdAsk(ctx context.Context, args []string) int {
 	}
 	var attached string
 	if *diff || *base != "" {
+		// Same rule as repo access: never collect from a repository rooted
+		// at home or above (a dotfiles repo in ~), whose untracked files
+		// could be anything in $HOME.
+		if root, err := gitctx.Root(ctx, "."); err == nil && containsHome(root) {
+			return fail(errors.New("--diff would collect from a git repository rooted at your home directory; run so inside a project repository"))
+		}
 		gc, err := gitctx.Diff(ctx, ".", firstNonEmpty(*base, "HEAD"))
 		if err != nil {
 			return fail(err)
@@ -308,7 +314,7 @@ func resolveWorkspace(explicit, disabled bool, modeDefault *bool) (string, error
 	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
 		cwd = resolved
 	}
-	if root, err := gitctx.Root(cwd); err == nil {
+	if root, err := gitctx.Root(context.Background(), cwd); err == nil {
 		if !containsHome(root) {
 			return root, nil
 		}
@@ -367,15 +373,13 @@ var (
 // Stdin is read only when there is no prompt argument, or the argument is
 // "-", so a so called inside a shell loop never swallows the loop's input.
 func readPrompt(args, files []string) (string, error) {
-	text := strings.TrimSpace(strings.Join(args, " "))
-	useStdin := text == "" || text == "-"
-	if text == "-" {
-		text = ""
-	} else if text != "" && len(args) > 1 && args[len(args)-1] == "-" {
-		// "so ask question -": the question plus stdin.
-		text = strings.TrimSpace(strings.Join(args[:len(args)-1], " "))
-		useStdin = true
+	// Decided from the arguments themselves, not their text, so an empty
+	// argument (so ask "$q" with $q unset) never reads stdin.
+	useStdin := len(args) == 0 || args[len(args)-1] == "-"
+	if useStdin && len(args) > 0 {
+		args = args[:len(args)-1]
 	}
+	text := strings.TrimSpace(strings.Join(args, " "))
 	if !useStdin && stdinIsFile() {
 		fmt.Fprintln(os.Stderr, "so: stdin was not read; end the arguments with - to attach it")
 	}
@@ -603,7 +607,7 @@ func cmdDoctor(ctx context.Context, args []string) int {
 		}
 		found++
 		vctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		out, _ := exec.CommandContext(vctx, path, "--version").Output()
+		out, _ := boundedOutput(vctx, path, "--version")
 		cancel()
 		v, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
 		fmt.Printf("✓ %-7s %s  %s\n", name, path, v)
@@ -709,6 +713,23 @@ func pingTargets(cfg *config.Config, profile string, with []string) ([]config.Pa
 		}
 	}
 	return targets, nil
+}
+
+// boundedOutput runs a command and returns at most 64 KB of its stdout.
+func boundedOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = 2 * time.Second
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	out, _ := io.ReadAll(io.LimitReader(stdout, 64<<10))
+	cmd.Process.Kill()
+	cmd.Wait()
+	return out, nil
 }
 
 // runCanary tests what each model can reach without repo access: it plants a

@@ -99,6 +99,11 @@ func (o *Opinion) redact() {
 	for i := range o.Attempts {
 		o.Attempts[i] = Attempt{Kind: o.Attempts[i].Kind}
 	}
+	// A CLI's error names the backend and often the model; keep only its kind.
+	// The full error stays in the run history (see so runs show --reveal).
+	if o.Error != "" {
+		o.Error = fmt.Sprintf("failed (%s); the full error is in the run history: so runs show <run> --reveal", o.ErrorKind)
+	}
 }
 
 func (r Result) Succeeded() []Opinion {

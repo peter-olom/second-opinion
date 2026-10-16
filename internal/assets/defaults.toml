@@ -60,7 +60,7 @@ timeout = "15m"
 
 # ------------------------------------------------------------------- modes
 #
-# Built-in modes (general, review, plan, debug) ship with so and update with it.
+# Built-in modes (general, review, plan, debug, audit) ship with so and update with it.
 # To customise one, override only the fields you want to change. The rest keep
 # their built-in values. `so modes` lists modes, `so modes review` shows the
 # exact prompts, and `so modes review --toml` prints the mode to copy here.
