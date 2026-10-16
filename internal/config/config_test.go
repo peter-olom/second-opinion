@@ -237,3 +237,11 @@ func TestDefaultChairNestedFallbackRejected(t *testing.T) {
 		t.Error("nested fallback on default_chair should be rejected")
 	}
 }
+
+func TestParseSpecRejectsEffortTypos(t *testing.T) {
+	for _, spec := range []string{"codex:gpt@High", "codex:gpt@ultra", "pi:ollama/x:cloud@hgih"} {
+		if _, err := ParseSpec(spec); err == nil || !strings.Contains(err.Error(), "invalid effort") {
+			t.Errorf("ParseSpec(%q) err = %v, want an invalid-effort error", spec, err)
+		}
+	}
+}

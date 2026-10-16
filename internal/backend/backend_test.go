@@ -163,3 +163,19 @@ func TestTailBufferManySmallWrites(t *testing.T) {
 		t.Errorf("buffer grew to %d bytes, want at most twice the limit", len(b.buf))
 	}
 }
+
+func TestCodexFeatureListRetriedAfterFailure(t *testing.T) {
+	codexFeatureList = featureCache{}
+	t.Cleanup(func() { codexFeatureList = featureCache{} })
+	flag := filepath.Join(t.TempDir(), "ready")
+	// The first listing fails; once the flag exists, it works.
+	cli := script(t, `if [ "$1" = features ]; then [ -f `+flag+` ] && echo "apps  stable  true" && exit 0; exit 1; fi; echo answer`)
+	o := Options{Command: cli}
+	if _, err := codexFeatures(context.Background(), o); err == nil {
+		t.Fatal("first listing should fail")
+	}
+	os.WriteFile(flag, nil, 0o644)
+	if names, err := codexFeatures(context.Background(), o); err != nil || len(names) != 1 {
+		t.Errorf("second listing = %v, %v; a failure must not be cached", names, err)
+	}
+}

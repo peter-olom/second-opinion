@@ -2,6 +2,7 @@ package gitctx
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -300,5 +301,98 @@ func TestDiffSkipsFilterOnlyFiles(t *testing.T) {
 	}
 	if strings.Contains(ctx.Text, "PLAINTEXT-VAULT") {
 		t.Errorf("filter-only file was sent:\n%s", ctx.Text)
+	}
+}
+
+func TestDiffKeepsFilesWithBuiltinDiffDrivers(t *testing.T) {
+	// diff=golang only shapes hunk headers; such files must be sent normally.
+	dir := newRepo(t)
+	write(t, dir, ".gitattributes", "*.go diff=golang\n")
+	run(t, dir, "add", ".")
+	run(t, dir, "commit", "-q", "-m", "attrs")
+	write(t, dir, "a.go", "package a\n\nfunc A() int { return 42 }\n")
+
+	ctx, err := Diff(context.Background(), dir, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff := ctx.Text[:strings.Index(ctx.Text, "</git-diff>")]
+	if !strings.Contains(diff, "return 42") || !strings.Contains(ctx.Text, `<file path="a.go"`) {
+		t.Errorf("a .go file with diff=golang was dropped:\n%s", ctx.Text)
+	}
+}
+
+func TestDiffDropsDeletedFilteredFile(t *testing.T) {
+	dir := newRepo(t)
+	run(t, dir, "config", "filter.crypt.clean", "cat")
+	run(t, dir, "config", "filter.crypt.smudge", "cat")
+	write(t, dir, ".gitattributes", "*.secret filter=crypt\n")
+	write(t, dir, "db.secret", "PASSWORD=DELETED-SECRET\n")
+	run(t, dir, "add", ".")
+	run(t, dir, "commit", "-q", "-m", "secret")
+	os.Remove(filepath.Join(dir, "db.secret"))
+	write(t, dir, "a.go", "package a\n\nfunc A() int { return 3 }\n")
+
+	ctx, err := Diff(context.Background(), dir, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ctx.Text, "DELETED-SECRET") {
+		t.Errorf("a deleted filtered file appeared in the diff:\n%s", ctx.Text)
+	}
+	if !strings.Contains(ctx.Text, "return 3") {
+		t.Errorf("ordinary changes should still be sent:\n%s", ctx.Text)
+	}
+}
+
+func TestDiffManyFilteredFiles(t *testing.T) {
+	// One exclusion per file used to go on the command line; many LFS-style
+	// files must not break --diff.
+	dir := newRepo(t)
+	run(t, dir, "config", "filter.lfs.clean", "cat")
+	run(t, dir, "config", "filter.lfs.smudge", "cat")
+	write(t, dir, ".gitattributes", "*.bin filter=lfs\n")
+	for i := range 3000 {
+		write(t, dir, fmt.Sprintf("asset-%04d-with-a-long-name-to-fill-argv.bin", i), "data\n")
+	}
+	write(t, dir, "a.go", "package a\n\nfunc A() int { return 3 }\n")
+	ctx, err := Diff(context.Background(), dir, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ctx.Text, "return 3") {
+		t.Errorf("ordinary changes should still be sent")
+	}
+}
+
+func TestDropFiles(t *testing.T) {
+	diff := "diff --git a/keep.go b/keep.go\n+keep\n" +
+		"diff --git a/drop me.txt b/drop me.txt\n+DROPPED\n" +
+		"diff --git \"a/we\\\"ird.txt\" \"b/we\\\"ird.txt\"\n+QUOTED-DROPPED\n" +
+		"diff --git garbage header\n+UNPARSEABLE\n" +
+		"diff --git a/also-keep.go b/also-keep.go\n+also\n" +
+		"diff --git \"a/keep \\\"quoted\\\".go\" \"b/keep \\\"quoted\\\".go\"\n+QUOTED-KEPT\n"
+	got := dropFiles(diff, map[string]bool{"drop me.txt": true, `we"ird.txt`: true})
+	for _, gone := range []string{"DROPPED", "QUOTED-DROPPED", "UNPARSEABLE"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("%s should have been dropped:\n%s", gone, got)
+		}
+	}
+	for _, kept := range []string{"+keep", "+also", "+QUOTED-KEPT"} {
+		if !strings.Contains(got, kept) {
+			t.Errorf("%s should have been kept:\n%s", kept, got)
+		}
+	}
+}
+
+func TestDiffFailsClosedOnTooManyPaths(t *testing.T) {
+	defer func(n int) { maxPathsBytes = n }(maxPathsBytes)
+	maxPathsBytes = 50
+	dir := newRepo(t)
+	for i := range 20 {
+		write(t, dir, fmt.Sprintf("file-%02d.txt", i), "x\n")
+	}
+	if _, err := Diff(context.Background(), dir, "HEAD"); err == nil || !strings.Contains(err.Error(), "too many changed files") {
+		t.Errorf("err = %v, want a refusal rather than a partial check", err)
 	}
 }

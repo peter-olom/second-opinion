@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/BurntSushi/toml"
 
@@ -53,6 +54,15 @@ func (p Panelist) Spec() string {
 	return s
 }
 
+func isWord(s string) bool {
+	for _, r := range s {
+		if !unicode.IsLetter(r) {
+			return false
+		}
+	}
+	return s != ""
+}
+
 var effortLevels = map[string]bool{
 	"off": true, "none": true, "minimal": true, "low": true, "medium": true, "high": true, "xhigh": true, "max": true,
 }
@@ -62,9 +72,16 @@ func ParseSpec(spec string) (Panelist, error) {
 	var p Panelist
 	s := spec
 	// Only a known level after the last "@" is an effort; model IDs can
-	// contain "@" themselves (for example claude-opus@20250514).
-	if i := strings.LastIndex(s, "@"); i >= 0 && effortLevels[s[i+1:]] {
-		p.Effort, s = s[i+1:], s[:i]
+	// contain "@" themselves (for example claude-opus@20250514). A word that
+	// is not a level is most likely a typo, so it is an error rather than
+	// part of the model name.
+	if i := strings.LastIndex(s, "@"); i >= 0 {
+		switch suffix := s[i+1:]; {
+		case effortLevels[suffix]:
+			p.Effort, s = suffix, s[:i]
+		case isWord(suffix):
+			return p, fmt.Errorf("invalid effort %q in %q: want one of off, minimal, low, medium, high, xhigh, max", suffix, spec)
+		}
 	}
 	p.Backend, p.Model, _ = strings.Cut(s, ":")
 	if p.Backend == "" {
@@ -247,7 +264,7 @@ func (c *Config) validate() error {
 		return err
 	}
 	if c.HistoryDays < 0 || c.HistoryDays > 36500 {
-		return fmt.Errorf("history_days must be at most 36500 (leave it out for 7; set history = false to turn history off)")
+		return fmt.Errorf("history_days must be between 1 and 36500 (leave it out for 7; set history = false to turn history off)")
 	}
 	if c.DefaultProfile != "" {
 		if _, ok := c.Profiles[c.DefaultProfile]; !ok {

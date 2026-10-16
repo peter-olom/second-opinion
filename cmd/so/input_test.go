@@ -183,3 +183,39 @@ panelists = [{ backend = "pi", model = "x", fallback = [{ backend = "pi", model 
 		t.Errorf("pinged %v, want x,fa,fb", models)
 	}
 }
+
+func TestRepoRefusedFromHomeOutsideAnyRepo(t *testing.T) {
+	home := t.TempDir() // not a git repository
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Chdir(home)
+	if got, err := resolveWorkspace(true, false, nil); err == nil {
+		t.Errorf("--repo from $HOME = %q; want a refusal", got)
+	}
+}
+
+func TestCanaryReportsWhatModelsCanRead(t *testing.T) {
+	unsetEnv(t, backend.EnvGuard)
+	dir := t.TempDir()
+	// A fake pi that reads any path named in its prompt, and one that cannot.
+	reader := filepath.Join(dir, "reader")
+	os.WriteFile(reader, []byte("#!/bin/sh\nprompt=$(cat)\nf=$(echo \"$prompt\" | grep -o '/[^ ]*canary.txt')\ncat \"$f\"\n"), 0o755)
+	blind := filepath.Join(dir, "blind")
+	os.WriteFile(blind, []byte("#!/bin/sh\ncat >/dev/null\necho NO-TOOLS\n"), 0o755)
+
+	for name, tc := range map[string]struct {
+		cli  string
+		code int
+		mark string
+	}{"reads": {reader, 1, "✗"}, "blind": {blind, 0, "✓"}} {
+		cfgPath := filepath.Join(t.TempDir(), "config.toml")
+		os.WriteFile(cfgPath, []byte("[backends.pi]\ncommand = \""+tc.cli+"\"\n"), 0o644)
+		var code int
+		out := captureStdout(t, func() {
+			code = run(context.Background(), []string{"doctor", "--canary", "--config", cfgPath, "-w", "pi:fake"})
+		})
+		if code != tc.code || !strings.Contains(out, tc.mark+" pi:fake") {
+			t.Errorf("%s: exit %d, output:\n%s\nwant exit %d and %s", name, code, out, tc.code, tc.mark)
+		}
+	}
+}

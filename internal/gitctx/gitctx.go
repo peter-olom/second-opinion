@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -74,7 +75,10 @@ func Diff(ctx context.Context, dir, base string) (Context, error) {
 		}
 	}
 
-	changed, err := gitPaths(ctx, root, "diff", "--name-only", "--diff-filter=d", "-z", from)
+	// Every path in the diff, deletions included, and the untracked files.
+	// A truncated list would let files escape the filter check below, so it
+	// is an error rather than a partial answer.
+	inDiff, err := gitPaths(ctx, root, "diff", "--name-only", "--no-renames", "-z", from)
 	if err != nil {
 		return Context{}, err
 	}
@@ -82,23 +86,27 @@ func Diff(ctx context.Context, dir, base string) (Context, error) {
 	if err != nil {
 		return Context{}, err
 	}
-	// Files under a git filter or diff driver (git-crypt, transcrypt, ...) can
-	// be plaintext in the working tree while the repository stores ciphertext.
+	// Files under a git filter (git-crypt, transcrypt, sops, LFS, ...) can be
+	// plaintext in the working tree while the repository stores ciphertext.
 	// They are left out of both the diff and the attachments.
-	filtered, err := filteredPaths(ctx, root, append(changed[:len(changed):len(changed)], untracked...))
+	filtered, err := filteredPaths(ctx, root, append(inDiff[:len(inDiff):len(inDiff)], untracked...))
 	if err != nil {
 		return Context{}, err
 	}
-	diffArgs := []string{"diff", "--no-color", "--no-ext-diff", "--no-textconv", from, "--"}
-	for p := range filtered {
-		diffArgs = append(diffArgs, ":(exclude,literal)"+p)
+	changed, err := gitPaths(ctx, root, "diff", "--name-only", "--no-renames", "--diff-filter=d", "-z", from)
+	if err != nil {
+		return Context{}, err
 	}
 	// --no-textconv and --no-ext-diff keep configured drivers (which might
 	// decrypt secrets or run arbitrary commands) out of what is sent.
-	diff, diffTruncated, err := git(ctx, root, maxDiffBytes, diffArgs...)
+	// Filtered files are dropped from the output here, rather than with one
+	// pathspec each, which could overflow the command line.
+	raw, diffTruncated, err := git(ctx, root, maxDiffBytes, "-c", "core.quotePath=false",
+		"diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", from)
 	if err != nil {
 		return Context{}, err
 	}
+	diff := dropFiles(raw, filtered)
 	if strings.TrimSpace(diff) == "" && len(untracked) == 0 {
 		return Context{}, fmt.Errorf("--diff: no changes against %s", baseDesc)
 	}
@@ -243,14 +251,61 @@ func gitEnv() []string {
 	return env
 }
 
-// filteredPaths returns the paths that have a git filter, or a named diff
-// driver, set in .gitattributes.
+// dropFiles removes the sections for the given paths from a git diff. A
+// section whose header cannot be parsed is dropped too, to fail closed.
+func dropFiles(diff string, drop map[string]bool) string {
+	if len(drop) == 0 {
+		return diff
+	}
+	var b strings.Builder
+	keep := true
+	for _, line := range strings.SplitAfter(diff, "\n") {
+		if rest, ok := strings.CutPrefix(line, "diff --git "); ok {
+			path, ok := diffHeaderPath(strings.TrimRight(rest, "\n"))
+			keep = ok && !drop[path]
+		}
+		if keep {
+			b.WriteString(line)
+		}
+	}
+	return b.String()
+}
+
+// diffHeaderPath extracts P from "a/P b/P" or the quoted form "\"a/P\" \"b/P\""
+// (with --no-renames both sides name the same path).
+func diffHeaderPath(rest string) (string, bool) {
+	if strings.HasPrefix(rest, `"`) {
+		q, err := strconv.QuotedPrefix(rest)
+		if err != nil {
+			return "", false
+		}
+		p, err := strconv.Unquote(q)
+		if err != nil || !strings.HasPrefix(p, "a/") {
+			return "", false
+		}
+		return p[2:], true
+	}
+	n := len(rest) - len("a/") - len(" b/")
+	if n <= 0 || n%2 != 0 || !strings.HasPrefix(rest, "a/") {
+		return "", false
+	}
+	p := rest[2 : 2+n/2]
+	if rest[2+n/2:] != " b/"+p {
+		return "", false
+	}
+	return p, true
+}
+
+// filteredPaths returns the paths that have a git filter set in
+// .gitattributes. A diff driver alone is not enough: git's built-in ones
+// (diff=golang, diff=python, ...) only shape hunk headers, and --no-textconv
+// stops any configured textconv from running.
 func filteredPaths(ctx context.Context, root string, paths []string) (map[string]bool, error) {
 	filtered := map[string]bool{}
 	if len(paths) == 0 {
 		return filtered, nil
 	}
-	cmd := exec.CommandContext(ctx, "git", "-c", "core.fsmonitor=false", "check-attr", "-z", "--stdin", "filter", "diff")
+	cmd := exec.CommandContext(ctx, "git", "-c", "core.fsmonitor=false", "check-attr", "-z", "--stdin", "filter")
 	cmd.Dir = root
 	cmd.Env = append(gitEnv(), "GIT_OPTIONAL_LOCKS=0")
 	cmd.Stdin = strings.NewReader(strings.Join(paths, "\x00") + "\x00")
@@ -263,14 +318,15 @@ func filteredPaths(ctx context.Context, root string, paths []string) (map[string
 		}
 		return nil, fmt.Errorf("git check-attr: %s", strings.TrimSpace(stderr.String()))
 	}
+	if out.truncated {
+		return nil, errors.New("--diff: too many changed files to check their git attributes; use a narrower --base")
+	}
 	// Records are path, attribute, value, each NUL-terminated.
 	f := strings.Split(out.String(), "\x00")
 	for i := 0; i+2 < len(f); i += 3 {
 		path, attr, value := f[i], f[i+1], f[i+2]
 		switch {
 		case attr == "filter" && value != "unspecified" && value != "unset":
-			filtered[path] = true
-		case attr == "diff" && value != "unspecified" && value != "unset" && value != "set":
 			filtered[path] = true
 		}
 	}
@@ -283,10 +339,7 @@ func gitPaths(ctx context.Context, dir string, args ...string) ([]string, error)
 		return nil, err
 	}
 	if truncated {
-		// Drop the final, possibly partial, path.
-		if i := strings.LastIndexByte(out, 0); i >= 0 {
-			out = out[:i]
-		}
+		return nil, errors.New("--diff: too many changed files; use a narrower --base")
 	}
 	var paths []string
 	for _, p := range strings.Split(out, "\x00") {
@@ -299,12 +352,17 @@ func gitPaths(ctx context.Context, dir string, args ...string) ([]string, error)
 
 // limitedBuffer keeps the first limit bytes written to it.
 type limitedBuffer struct {
-	buf   []byte
-	limit int
+	buf       []byte
+	limit     int
+	truncated bool
 }
 
 func (b *limitedBuffer) Write(p []byte) (int, error) {
-	if room := b.limit - len(b.buf); room > 0 {
+	room := b.limit - len(b.buf)
+	if len(p) > room {
+		b.truncated = true
+	}
+	if room > 0 {
 		b.buf = append(b.buf, p[:min(len(p), room)]...)
 	}
 	return len(p), nil

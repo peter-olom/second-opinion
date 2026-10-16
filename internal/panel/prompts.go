@@ -1,8 +1,9 @@
 package panel
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/peter-olom/second-opinion/internal/config"
@@ -104,22 +105,19 @@ func compose(preamble, modeName, instructions, format string) string {
 	return b.String()
 }
 
-// ChairPrompt presents the original request and the panel's responses to the chair.
+// ChairPrompt presents the original request and the panel's responses to the
+// chair. The block tags carry a random per-run suffix, so nothing inside the
+// request or a panelist's answer can open or close a block (forging another
+// panelist's response), and nothing needs escaping: code like
+// Mono<Response> reaches the chair exactly as the panel saw it.
 func ChairPrompt(request string, opinions []Opinion) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "<request>\n%s\n</request>\n", neutralizeTags(strings.TrimSpace(request)))
+	b := make([]byte, 6)
+	rand.Read(b)
+	nonce := hex.EncodeToString(b)
+	var out strings.Builder
+	fmt.Fprintf(&out, "<request-%s>\n%s\n</request-%s>\n", nonce, strings.TrimSpace(request), nonce)
 	for _, o := range opinions {
-		fmt.Fprintf(&b, "\n<response panelist=%q>\n%s\n</response>\n", o.Label, neutralizeTags(strings.TrimSpace(o.Output)))
+		fmt.Fprintf(&out, "\n<response-%s panelist=%q>\n%s\n</response-%s>\n", nonce, o.Label, strings.TrimSpace(o.Output), nonce)
 	}
-	return b.String()
-}
-
-// structureTag matches any opening or closing request/response tag, in any case.
-var structureTag = regexp.MustCompile(`(?i)<(/?)(response|request)`)
-
-// neutralizeTags stops text inside the chair's prompt (the request or a
-// panelist's answer) from opening or closing a block, which could forge
-// another panelist's answer or end the request early.
-func neutralizeTags(s string) string {
-	return structureTag.ReplaceAllString(s, "&lt;$1$2")
+	return out.String()
 }

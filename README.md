@@ -136,9 +136,10 @@ The caller always writes the prompt. There are two ways to give the panel more c
   and untracked file. `--diff` covers uncommitted changes. `--base main` covers everything since the
   branch left `main`, via the merge-base, so `main`'s later commits are excluded. Only regular files
   are attached: symlinks are never followed, and binary, very large, or special files are listed but
-  not attached. Git's textconv and external diff drivers are off, and files with a git `filter` or
-  diff driver in `.gitattributes` (git-crypt, transcrypt, …) are left out of both the diff and the
-  attachments, since their working copies may be decrypted. Limits: 1 MB of diff, 256 KB per file,
+  not attached. Git's textconv and external diff drivers are off, and files with a git `filter` in
+  `.gitattributes` (git-crypt, transcrypt, sops-style filters, LFS, …) are left out of both the diff
+  and the attachments, since their working copies may be decrypted. If there are too many changed
+  files to check this, `--diff` stops rather than send a partial check. Limits: 1 MB of diff, 256 KB per file,
   1.5 MB of files in total.
 - **`-f <file>` and stdin.** `-f` attaches a regular file of up to 1 MB. Stdin (up to 2 MB) is read
   only when there is no prompt argument, or when the arguments end with `-`:
@@ -171,6 +172,10 @@ Claude also gets `--setting-sources "" --strict-mcp-config` (your `CLAUDE.md` me
 load), codex gets `--ignore-user-config --ignore-rules`, and pi gets `--no-extensions --no-skills
 --no-approve` (your pi settings, such as the default model, still apply). Every panelist is told not
 to use tools without repo access.
+
+The Codex lockdown asks Codex for its feature list (`codex features list`), which reads your
+`~/.codex/config.toml`. If that fails, Codex panelists stop with an error rather than run with
+their tools unlocked.
 
 `so doctor --canary` tests this on your machine. It plants a file outside each model's scratch
 folder and asks the model, configured exactly as a panelist without repo access but explicitly

@@ -324,6 +324,9 @@ func resolveWorkspace(explicit, disabled bool, modeDefault *bool) (string, error
 		return cwd, nil
 	}
 	if explicit {
+		if containsHome(cwd) {
+			return "", errors.New("--repo would give the panel your whole home directory; run so from a project folder instead")
+		}
 		return cwd, nil
 	}
 	return "", nil

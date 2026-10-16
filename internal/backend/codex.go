@@ -92,38 +92,40 @@ var codexNetworkFeatures = map[string]bool{
 var codexShellFeatures = map[string]bool{"shell_tool": true, "unified_exec": true, "code_mode_host": true}
 
 type featureCache struct {
-	once  sync.Once
+	mu    sync.Mutex
 	names []string
-	err   error
 }
 
 var codexFeatureList featureCache
 
 // codexFeatures lists every feature this Codex knows about, whatever its
 // state. The state column is ignored: it reflects the user's config, which
-// panelists run without. If the list is unavailable the panelist fails
-// rather than run with Codex's tools unlocked: guessing names is no
-// alternative, since Codex rejects a feature it does not know.
+// panelists run without. Only a successful list is cached, so one slow start
+// does not fail every later Codex call. If the list is unavailable the
+// panelist fails rather than run with Codex's tools unlocked: guessing names
+// is no alternative, since Codex rejects a feature it does not know.
 func codexFeatures(ctx context.Context, o Options) ([]string, error) {
-	codexFeatureList.once.Do(func() {
-		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		env := os.Environ()
-		for k, v := range o.Env {
-			env = append(env, k+"="+v)
-		}
-		out, err := execCLI(ctx, Command("codex", o), []string{"features", "list"}, os.TempDir(), env, "")
-		names := parseCodexFeatures(string(out))
-		switch {
-		case err != nil:
-			codexFeatureList.err = fmt.Errorf("codex: cannot list its features to disable its tools (%v); update Codex", err)
-		case len(names) == 0:
-			codexFeatureList.err = errors.New("codex: `codex features list` returned nothing; cannot disable its tools, so not running it")
-		default:
-			codexFeatureList.names = names
-		}
-	})
-	return codexFeatureList.names, codexFeatureList.err
+	codexFeatureList.mu.Lock()
+	defer codexFeatureList.mu.Unlock()
+	if codexFeatureList.names != nil {
+		return codexFeatureList.names, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	env := os.Environ()
+	for k, v := range o.Env {
+		env = append(env, k+"="+v)
+	}
+	out, err := execCLI(ctx, Command("codex", o), []string{"features", "list"}, os.TempDir(), env, "")
+	if err != nil {
+		return nil, fmt.Errorf("codex: cannot list its features to disable its tools (%v); check that Codex and ~/.codex/config.toml work", err)
+	}
+	names := parseCodexFeatures(string(out))
+	if len(names) == 0 {
+		return nil, errors.New("codex: `codex features list` returned nothing; cannot disable its tools, so not running it")
+	}
+	codexFeatureList.names = names
+	return names, nil
 }
 
 // parseCodexFeatures reads "name  stage  true|false" lines.
