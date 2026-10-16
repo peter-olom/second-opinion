@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -65,7 +64,7 @@ func TestAttachRejectsFIFOWithoutHanging(t *testing.T) {
 		t.Skip("no FIFOs")
 	}
 	fifo := filepath.Join(t.TempDir(), "pipe")
-	if err := syscall.Mkfifo(fifo, 0o644); err != nil {
+	if err := mkfifo(fifo); err != nil {
 		t.Skip(err)
 	}
 	// No writer ever appears: opening this FIFO would block forever.

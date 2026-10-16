@@ -540,6 +540,10 @@ func cmdDoctor(ctx context.Context, args []string) int {
 	if code, ok := parse(fs, args); !ok {
 		return code
 	}
+	if (*ping || *canary || len(*with) > 0) && insidePanelist() {
+		fmt.Fprintln(os.Stderr, "so: refusing to call models from inside a second-opinion panelist.")
+		return 3
+	}
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
 		return fail(err)
@@ -572,10 +576,6 @@ func cmdDoctor(ctx context.Context, args []string) int {
 	}
 	if !*ping && !*canary && len(*with) == 0 {
 		return 0
-	}
-	if insidePanelist() {
-		fmt.Fprintln(os.Stderr, "so: refusing to call models from inside a second-opinion panelist.")
-		return 3
 	}
 	if *canary {
 		targets, err := pingTargets(cfg, *profile, *with)
