@@ -45,8 +45,10 @@ It lists what it will remove and asks before deleting (`--yes` skips the prompt)
 - It deletes only files `so` created: each `SKILL.md`, the `runs/*.json` files, the binary, and
   with `--all` the config file. Folders are removed only if that leaves them empty. Anything you
   added stays, and so does a config that shares a folder with the history.
-- It leaves symlinked folders alone. To be safe, with `--all` it also keeps the config's folder (even
-  if empty) when the config path is relative, contains `.` or `..`, or goes through a symlink.
+- It leaves symlinked folders alone, and never removes a folder that one of them points to, so no
+  link is left dangling. To be safe, with `--all` it also keeps the config's folder (even if empty)
+  when the config path is relative, contains `.` or `..`, or when the config's own folder is a
+  symlink.
 - If you run `so` through a symlink, only the link is removed. The file it points to stays. If it
   can't prove which file you ran, it leaves the binary in place and tells you.
 - On Windows a running program can't delete itself, so the binary is renamed to `so.exe.old` for

@@ -112,6 +112,13 @@ func cmdUninstall(ctx context.Context, args []string) int {
 		return 130
 	}
 
+	// Identify the running binary now, while it still exists, so the closing
+	// PATH note never calls a kept binary "another so".
+	var running os.FileInfo
+	if exe, err := executable(); err == nil {
+		running, _ = os.Stat(exe)
+	}
+
 	// From here on, Ctrl-C is deliberately not checked: stopping halfway
 	// through would leave a partial uninstall that is harder to reason about
 	// than finishing the few remaining removals.
@@ -152,15 +159,21 @@ func cmdUninstall(ctx context.Context, args []string) int {
 		case r.rename != "":
 			fmt.Printf("moved %s to %s; delete it once this command exits\n", r.path, r.rename)
 		case stillThere:
-			fmt.Printf("removed so's files from %s; kept the folder because it still contains other files\n", r.path)
+			why := "it still contains other files"
+			if entries, err := os.ReadDir(r.path); err == nil && len(entries) == 0 {
+				why = "a symlink elsewhere points to it"
+			}
+			fmt.Printf("removed so's files from %s; kept the folder because %s\n", r.path, why)
 		default:
 			fmt.Println("removed", r.path)
 		}
 	}
 
-	if other, err := lookPath("so"); err == nil {
-		if abs, err := filepath.Abs(other); err == nil && !plannedBinary(plan, abs) {
-			fmt.Printf("note: another so is still on your PATH at %s\n", abs)
+	if other, err := lookPath("so"); err == nil && !plannedBinary(plan, other) {
+		if fi, err := os.Stat(other); err == nil && running != nil && os.SameFile(fi, running) {
+			// The running binary, which was kept; its note was printed above.
+		} else {
+			fmt.Printf("note: another so is still on your PATH at %s\n", other)
 		}
 	}
 	fmt.Println("Skills installed elsewhere with `so skill install --dir` are not tracked; remove those yourself.")
@@ -202,8 +215,20 @@ func planUninstall(cfg string, cfgParentIsLink, all bool) (plan []removal, notes
 		return err == nil && os.SameFile(fi, cfgInfo)
 	}
 
+	// Folders that a symlink we leave alone points to must not be removed,
+	// or that link would dangle. The config's folder joins them below.
+	var protected []os.FileInfo
+	protectTarget := func(dir string) {
+		if fi, ok, _ := lstat(dir); ok && fi.Mode()&fs.ModeSymlink != 0 {
+			if target, err := os.Stat(dir); err == nil {
+				protected = append(protected, target)
+			}
+		}
+	}
+
 	for _, s := range skillDirs {
 		dir := filepath.Join(home, s.dir, "second-opinion")
+		protectTarget(dir)
 		r, note, err := ownedDir(dir, []string{"SKILL.md"}, keep)
 		if err != nil {
 			return nil, nil, err
@@ -218,6 +243,7 @@ func planUninstall(cfg string, cfgParentIsLink, all bool) (plan []removal, notes
 	}
 
 	if state := history.StateDir(); state != "" {
+		protectTarget(state)
 		runs := filepath.Join(state, "runs")
 		var names []string
 		fi, ok, err := lstat(runs)
@@ -278,21 +304,21 @@ func planUninstall(cfg string, cfgParentIsLink, all bool) (plan []removal, notes
 		plan = append(plan, *r)
 	}
 
-	// A config folder reached through a symlink is never removed, whichever
-	// entry would otherwise remove it (say, history sharing that folder).
+	// A config folder reached through a symlink is never removed either,
+	// whichever entry would otherwise remove it (say, history sharing it).
 	if cfgParentIsLink {
-		if protected, err := os.Stat(filepath.Dir(cfg)); err == nil {
-			for i := range plan {
-				dirs := plan[i].dirs[:0]
-				for _, d := range plan[i].dirs {
-					if fi, err := os.Stat(d); err == nil && os.SameFile(fi, protected) {
-						continue
-					}
-					dirs = append(dirs, d)
-				}
-				plan[i].dirs = dirs
+		if fi, err := os.Stat(filepath.Dir(cfg)); err == nil {
+			protected = append(protected, fi)
+		}
+	}
+	for i := range plan {
+		dirs := plan[i].dirs[:0]
+		for _, d := range plan[i].dirs {
+			if !isProtected(d, protected) {
+				dirs = append(dirs, d)
 			}
 		}
+		plan[i].dirs = dirs
 	}
 
 	// Drop folders that hold nothing of so's: no files to delete, and they
@@ -326,6 +352,19 @@ func planUninstall(cfg string, cfgParentIsLink, all bool) (plan []removal, notes
 		kept = append(kept, r)
 	}
 	return kept, notes, nil
+}
+
+func isProtected(dir string, protected []os.FileInfo) bool {
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return false
+	}
+	for _, p := range protected {
+		if os.SameFile(fi, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // emptyAfter reports whether dir would be empty once the planned files are

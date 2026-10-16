@@ -939,4 +939,52 @@ func TestUninstallKeepsBinaryStartedFromDifferentFile(t *testing.T) {
 	if !strings.Contains(out, "which is a different file") {
 		t.Errorf("output should explain why the binary was kept:\n%s", out)
 	}
+	if strings.Contains(out, "another so is still on your PATH") {
+		t.Errorf("the kept running binary must not be reported as another so:\n%s", out)
+	}
+}
+
+func TestUninstallKeepsLinkToDifferentBinary(t *testing.T) {
+	f := newFixture(t)
+	// so was started through a link named so that points to a different executable.
+	other := filepath.Join(t.TempDir(), "other-tool")
+	write(t, other)
+	os.Chmod(other, 0o755)
+	link := filepath.Join(t.TempDir(), "so")
+	if err := os.Symlink(other, link); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	invokedAs = func() string { return link }
+
+	code, out, _ := f.uninstall(t, "", "--yes")
+	if code != 0 {
+		t.Fatalf("exit code = %d", code)
+	}
+	mustExist(t, link, other, f.bin)
+	if !strings.Contains(out, "which does not point to it") {
+		t.Errorf("output should explain why the binary was kept:\n%s", out)
+	}
+}
+
+func TestUninstallKeepsSkillFolderAnotherHarnessLinksTo(t *testing.T) {
+	f := newFixture(t)
+	// ~/.codex/skills/second-opinion -> ~/.claude/skills/second-opinion
+	claude := filepath.Join(f.home, ".claude/skills/second-opinion")
+	codex := filepath.Join(f.home, ".codex/skills/second-opinion")
+	mkdir(t, filepath.Dir(codex))
+	if err := os.Symlink(claude, codex); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+
+	code, out, stderr := f.uninstall(t, "", "--yes")
+	if code != 0 {
+		t.Fatalf("exit code = %d: %s", code, stderr)
+	}
+	mustBeGone(t, filepath.Join(claude, "SKILL.md"))
+	if _, err := os.Stat(codex); err != nil {
+		t.Errorf("the codex skill link should still resolve (no dangling link): %v", err)
+	}
+	if !strings.Contains(out, "kept the folder because a symlink elsewhere points to it") {
+		t.Errorf("output should explain why the folder was kept:\n%s", out)
+	}
 }
