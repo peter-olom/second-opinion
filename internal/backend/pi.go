@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,9 +11,17 @@ import (
 // pi runs pi in print mode with no extensions, skills, project-local resources,
 // or session. In a workspace it gets the read-only tools and the project's
 // context files; otherwise it has no tools at all.
+//
+// pi migrates files in its working directory at startup. The one project-level
+// migration in pi 1.3 renames .pi/commands to .pi/prompts when only the first
+// exists; in such a repository pi is not run at all, so a review can never
+// modify the repository.
 type pi struct{ opts Options }
 
 func (p pi) Run(ctx context.Context, req Request) (string, error) {
+	if req.Workspace != "" && piWouldMigrate(req.Workspace) {
+		return "", errors.New("pi: not run in this repository: pi would rename its .pi/commands to .pi/prompts at startup (a pi migration), which would modify the repository")
+	}
 	// pi appends a discovered APPEND_SYSTEM.md (from ~/.pi/agent, or a
 	// trusted project) only when no --append-system-prompt is given, so one
 	// is always passed. pi reads the value as a file if a file by that name
@@ -53,6 +62,14 @@ func (p pi) Run(ctx context.Context, req Request) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// piWouldMigrate reports whether pi's startup migration would rename
+// <repo>/.pi/commands to .pi/prompts.
+func piWouldMigrate(repo string) bool {
+	_, cmdErr := os.Lstat(filepath.Join(repo, ".pi", "commands"))
+	_, promptsErr := os.Lstat(filepath.Join(repo, ".pi", "prompts"))
+	return cmdErr == nil && os.IsNotExist(promptsErr)
 }
 
 // piEffort maps to pi's thinking levels: off, minimal, low, medium, high, xhigh, max.

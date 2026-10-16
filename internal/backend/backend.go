@@ -167,21 +167,55 @@ func execCLI(ctx context.Context, bin string, args []string, dir string, env []s
 			}
 			return nil, ctxErr
 		}
-		detail := tail(stderr.String(), 15)
-		if detail == "" {
-			detail = tail(stdout.String(), 15)
+		cliErr := &CLIError{Bin: filepath.Base(bin), Err: err, Detail: tailBytes(tail(stderr.String(), 15), maxDetailBytes)}
+		if cliErr.Detail == "" {
+			cliErr.Detail = tailBytes(tail(stdout.String(), 15), maxDetailBytes)
+			cliErr.FromStdout = cliErr.Detail != ""
 		}
 		// stdout is returned too: a CLI may report its error there (claude's
 		// JSON result), which the caller can parse.
-		if detail != "" {
-			return stdout.Bytes(), fmt.Errorf("%s: %w\n%s", filepath.Base(bin), err, detail)
-		}
-		return stdout.Bytes(), fmt.Errorf("%s: %w", filepath.Base(bin), err)
+		return stdout.Bytes(), cliErr
 	}
 	if stdout.Truncated() {
 		return nil, fmt.Errorf("%s: output exceeded %d bytes", filepath.Base(bin), maxStdout)
 	}
 	return stdout.Bytes(), nil
+}
+
+// CLIError is a CLI that failed, with the end of what it printed.
+type CLIError struct {
+	Bin    string
+	Err    error
+	Detail string
+	// FromStdout means Detail came from stdout (stderr was empty), so it may
+	// be the CLI's normal output rather than an error message.
+	FromStdout bool
+}
+
+func (e *CLIError) Error() string {
+	if e.Detail == "" {
+		return fmt.Sprintf("%s: %v", e.Bin, e.Err)
+	}
+	return fmt.Sprintf("%s: %v\n%s", e.Bin, e.Err, e.Detail)
+}
+
+func (e *CLIError) Unwrap() error { return e.Err }
+
+// maxDetailBytes bounds how much of a failing CLI's output goes into its
+// error (and so into the run history): one long line could otherwise carry
+// megabytes.
+const maxDetailBytes = 4 << 10
+
+// tailBytes keeps the last n bytes of s, starting at a character boundary.
+func tailBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	i := len(s) - n
+	for i < len(s) && !utf8.RuneStart(s[i]) {
+		i++
+	}
+	return "…" + s[i:]
 }
 
 // waitFor waits for n signals on done, or until d passes, and returns how

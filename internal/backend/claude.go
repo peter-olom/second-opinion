@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -51,6 +52,17 @@ func (c claude) Run(ctx context.Context, req Request) (string, error) {
 		// noise or a numeric JSON field cannot decide the kind.
 		if parseErr == nil && res.Result != "" && (res.IsError || res.Subtype != "success") {
 			return "", fmt.Errorf("%w\nclaude: %s: %s", runErr, res.Subtype, truncate([]byte(oneLine(res.Result)), 500))
+		}
+		// Otherwise, if the only detail is claude's own JSON output, end with
+		// a neutral line so its fields (a duration of 429 ms, an answer about
+		// rate limits) are not mistaken for the error.
+		var cliErr *CLIError
+		if parseErr == nil && errors.As(runErr, &cliErr) && cliErr.FromStdout {
+			subtype := res.Subtype
+			if subtype == "" {
+				subtype = "no result"
+			}
+			return "", fmt.Errorf("%w\nclaude: %s: no error message", runErr, subtype)
 		}
 		return "", runErr
 	}

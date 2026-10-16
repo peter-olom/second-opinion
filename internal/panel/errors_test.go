@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -173,5 +175,26 @@ func TestClaudeJSONLineDoesNotDecideTheKind(t *testing.T) {
 		"claude: error: There's an issue with the selected model (opus-9)."
 	if got := classify(errors.New(msg)); got != KindModel {
 		t.Errorf("classify = %s, want model", got)
+	}
+}
+
+func TestClaudeSuccessOutputNeverTriggersAFallback(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "fallback-ran")
+	for name, json := range map[string]string{
+		"success result":      `{"type":"result","subtype":"success","is_error":false,"duration_ms":429,"result":"Here is how rate limit handling works."}`,
+		"error, empty result": `{"type":"result","subtype":"error_during_execution","is_error":true,"total_cost_usd":0.429}`,
+	} {
+		claudeCLI := fakeCLI(t, "cat >/dev/null\necho '"+json+"'\nexit 1\n")
+		fallback := fakeCLI(t, "touch "+marker+"\ncat >/dev/null\necho fallback\n")
+		runner := &Runner{Backends: map[string]config.Backend{"claude": {Command: claudeCLI}, "pi": {Command: fallback}}}
+		pl := config.Panelist{Backend: "claude", Fallback: []config.Panelist{{Backend: "pi"}}}
+		op := runner.Ask(context.Background(), pl, "A", "sys", "q", "")
+		if op.ErrorKind != KindOther {
+			t.Errorf("%s: kind = %s, want other", name, op.ErrorKind)
+		}
+		if _, err := os.Stat(marker); err == nil {
+			t.Errorf("%s: a fallback was spent on a non-quota failure", name)
+			os.Remove(marker)
+		}
 	}
 }

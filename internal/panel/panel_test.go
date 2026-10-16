@@ -91,17 +91,18 @@ func TestEmptyResponseIsAnError(t *testing.T) {
 }
 
 func TestWorkspaceIsWorkingDirectory(t *testing.T) {
+	// Claude and codex run in the workspace; claude's fake reports its cwd.
 	repo := t.TempDir()
-	pwd := fakeCLI(t, `pwd -P`)
-	runner := &Runner{Backends: map[string]config.Backend{"pi": {Command: pwd}}}
-	pl := config.Panelist{Backend: "pi"}
+	pwd := fakeCLI(t, `cat >/dev/null; printf '{"result":"%s"}' "$(pwd -P)"`)
+	runner := &Runner{Backends: map[string]config.Backend{"claude": {Command: pwd}}}
+	pl := config.Panelist{Backend: "claude"}
 
-	withRepo := runner.Ask(context.Background(), pl, "pi", "sys", "hi", repo)
+	withRepo := runner.Ask(context.Background(), pl, "c", "sys", "hi", repo)
 	want, _ := filepath.EvalSymlinks(repo)
 	if withRepo.Output != want {
 		t.Errorf("cwd with workspace = %q, want %q", withRepo.Output, want)
 	}
-	without := runner.Ask(context.Background(), pl, "pi", "sys", "hi", "")
+	without := runner.Ask(context.Background(), pl, "c", "sys", "hi", "")
 	if without.Output == want || !strings.Contains(without.Output, "second-opinion-") {
 		t.Errorf("cwd without workspace = %q, want a scratch directory", without.Output)
 	}

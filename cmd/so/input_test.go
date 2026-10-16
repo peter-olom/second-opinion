@@ -368,3 +368,12 @@ func TestDefaultChairIsValidatedAndPinged(t *testing.T) {
 		t.Errorf("doctor --ping targets %v should include the default chair", targets)
 	}
 }
+
+func TestRunsRefusedInsidePanelist(t *testing.T) {
+	t.Setenv(backend.EnvGuard, "1")
+	for _, args := range [][]string{{"runs"}, {"runs", "show", "last", "--reveal"}} {
+		if code := run(context.Background(), args); code != 3 {
+			t.Errorf("so %v exit code = %d, want 3", args, code)
+		}
+	}
+}

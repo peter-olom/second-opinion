@@ -316,8 +316,9 @@ exit 1`)
 		t.Fatal("want an error for the non-zero exit")
 	}
 	lines := strings.Split(strings.TrimSpace(err.Error()), "\n")
-	if strings.HasPrefix(lines[len(lines)-1], "claude: success:") {
-		t.Errorf("the successful answer became the error's last line: %q", err)
+	last := lines[len(lines)-1]
+	if strings.Contains(last, "rate limit") || last != "claude: success: no error message" {
+		t.Errorf("last line = %q; want the neutral line, not the answer", last)
 	}
 }
 
@@ -353,8 +354,52 @@ func TestCancelAndTimeoutKillTheCLIAndHelpers(t *testing.T) {
 		}
 		time.Sleep(200 * time.Millisecond)
 		data, _ := os.ReadFile(pidFile)
-		if p, err := os.FindProcess(atoi(strings.TrimSpace(string(data)))); err == nil && p.Signal(nil0()) == nil {
+		pid := atoi(strings.TrimSpace(string(data)))
+		if pid <= 0 {
+			t.Fatalf("%s: helper pid not recorded", tc.name)
+		}
+		if p, err := os.FindProcess(pid); err == nil && p.Signal(nil0()) == nil {
 			t.Errorf("%s: helper still running", tc.name)
 		}
+	}
+}
+
+func TestPiRefusesRepoItWouldMigrate(t *testing.T) {
+	repo := t.TempDir()
+	os.MkdirAll(filepath.Join(repo, ".pi", "commands"), 0o755)
+	os.WriteFile(filepath.Join(repo, ".pi", "commands", "old.md"), []byte("legacy"), 0o644)
+	marker := filepath.Join(t.TempDir(), "pi-ran")
+	cli := script(t, "touch "+marker+"\ncat >/dev/null\necho ok\n")
+	_, err := pi{Options{Command: cli}}.Run(context.Background(), Request{System: "s", Prompt: "q", Dir: t.TempDir(), Workspace: repo})
+	if err == nil || !strings.Contains(err.Error(), "would rename") {
+		t.Errorf("err = %v, want a refusal", err)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Error("pi was run in a repository it would migrate")
+	}
+	// With .pi/prompts present there is nothing to migrate, so pi runs.
+	os.MkdirAll(filepath.Join(repo, ".pi", "prompts"), 0o755)
+	if _, err := (pi{Options{Command: cli}}).Run(context.Background(), Request{System: "s", Prompt: "q", Dir: t.TempDir(), Workspace: repo}); err != nil {
+		t.Errorf("with .pi/prompts present pi should run: %v", err)
+	}
+}
+
+func TestFailureDetailIsBounded(t *testing.T) {
+	cli := script(t, "head -c 200000 /dev/zero | tr '\\0' x\nexit 1\n")
+	_, err := run(context.Background(), "x", Options{Command: cli}, t.TempDir(), nil, "")
+	if err == nil || len(err.Error()) > maxDetailBytes+200 {
+		t.Errorf("error is %d bytes; want it bounded near %d", len(err.Error()), maxDetailBytes)
+	}
+}
+
+func TestCodexDiscoveryKeepsCancellation(t *testing.T) {
+	codexFeatureList = featureCache{}
+	t.Cleanup(func() { codexFeatureList = featureCache{} })
+	cli := script(t, "sleep 30\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(300*time.Millisecond, cancel)
+	_, err := codexFeatures(ctx, Options{Command: cli})
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want it to wrap context.Canceled", err)
 	}
 }

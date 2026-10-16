@@ -119,6 +119,7 @@ func codexFeatures(ctx context.Context, o Options) ([]string, error) {
 	if codexFeatureList.names != nil {
 		return codexFeatureList.names, nil
 	}
+	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	env := os.Environ()
@@ -126,7 +127,13 @@ func codexFeatures(ctx context.Context, o Options) ([]string, error) {
 		env = append(env, k+"="+v)
 	}
 	out, err := execCLI(ctx, Command("codex", o), []string{"features", "list"}, os.TempDir(), env, "")
-	if err != nil {
+	switch {
+	case parent.Err() != nil:
+		// The run was interrupted or timed out; keep that identity.
+		return nil, fmt.Errorf("codex: listing its features: %w", parent.Err())
+	case ctx.Err() != nil:
+		return nil, errors.New("codex: `codex features list` did not finish within 30s; cannot disable its tools, so not running it")
+	case err != nil:
 		return nil, fmt.Errorf("codex: cannot list its features to disable its tools (%v); check that Codex and ~/.codex/config.toml work", err)
 	}
 	names := parseCodexFeatures(string(out))

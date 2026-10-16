@@ -900,6 +900,11 @@ func cmdSkill(args []string) int {
 }
 
 func cmdRuns(args []string) int {
+	// A panelist could otherwise print earlier, unblinded runs in one command.
+	if insidePanelist() {
+		fmt.Fprintln(os.Stderr, "so: refusing to read the run history from inside a second-opinion panelist.")
+		return 3
+	}
 	if len(args) > 0 && args[0] == "show" {
 		return cmdRunsShow(args[1:])
 	}

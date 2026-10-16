@@ -185,6 +185,10 @@ A reviewed repository's own `.codex/config.toml` (MCP servers, features) and pi 
 `.pi/` (extensions, settings) are not loaded: in testing, an MCP server and an extension planted in
 a repository did not run while a panel reviewed it.
 
+pi migrates files in its working directory when it starts. The one project-level migration in pi
+1.3 renames `.pi/commands/` to `.pi/prompts/`. In a repository where that would happen, `so` doesn't
+run the pi panelist at all, and it reports why. A later pi version could add migrations of its own.
+
 These flags assume no overriding `args` in a `[backends.*]` section of your config: those are
 appended after `so`'s own flags, so they can undo the lockdown.
 
