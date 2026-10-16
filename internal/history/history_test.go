@@ -174,3 +174,21 @@ func TestIDsAreLongEnough(t *testing.T) {
 		t.Errorf("NewID = %q, want 8 hex characters of randomness", id)
 	}
 }
+
+func TestNonRunFilesAreNeverPrunedOrListed(t *testing.T) {
+	dir := t.TempDir()
+	notes := filepath.Join(dir, "notes.json")
+	os.WriteFile(notes, []byte("{}"), 0o644)
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	os.Chtimes(notes, old, old)
+	if err := Save(dir, record(time.Now()), 7*24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(notes); err != nil {
+		t.Error("a file that is not a run record was pruned")
+	}
+	recs, _ := List(dir, 0)
+	if len(recs) != 1 {
+		t.Errorf("List returned %d records, want only the real run", len(recs))
+	}
+}

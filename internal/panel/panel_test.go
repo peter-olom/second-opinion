@@ -260,3 +260,19 @@ func TestChairWithoutRepoIsToldNotToUseTools(t *testing.T) {
 		t.Error("a chair with repo access should not be told to avoid tools")
 	}
 }
+
+func TestRedactHintNamesTheRun(t *testing.T) {
+	failed := func() []Opinion {
+		return []Opinion{{Label: "Panelist A", Error: "pi: boom", ErrorKind: KindOther}}
+	}
+	saved := Result{Run: "20261016-120000-abcd1234", Anonymous: true, Opinions: failed()}
+	saved.Redact()
+	if !strings.Contains(saved.Opinions[0].Error, "so runs show 20261016-120000-abcd1234 --reveal") {
+		t.Errorf("hint = %q, want the real run ID", saved.Opinions[0].Error)
+	}
+	unsaved := Result{Anonymous: true, Opinions: failed()}
+	unsaved.Redact()
+	if strings.Contains(unsaved.Opinions[0].Error, "so runs show") || !strings.Contains(unsaved.Opinions[0].Error, "not recorded") {
+		t.Errorf("hint = %q, want no pointer to a run that does not exist", unsaved.Opinions[0].Error)
+	}
+}

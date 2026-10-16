@@ -87,22 +87,26 @@ type Result struct {
 // Attempt errors are dropped too, because they name the model that failed.
 func (r *Result) Redact() {
 	for i := range r.Opinions {
-		r.Opinions[i].redact()
+		r.Opinions[i].redact(r.Run)
 	}
 	if r.Synthesis != nil {
-		r.Synthesis.redact()
+		r.Synthesis.redact(r.Run)
 	}
 }
 
-func (o *Opinion) redact() {
+func (o *Opinion) redact(run string) {
 	o.Panelist = nil
 	for i := range o.Attempts {
 		o.Attempts[i] = Attempt{Kind: o.Attempts[i].Kind}
 	}
-	// A CLI's error names the backend and often the model; keep only its kind.
-	// The full error stays in the run history (see so runs show --reveal).
-	if o.Error != "" {
-		o.Error = fmt.Sprintf("failed (%s); the full error is in the run history: so runs show <run> --reveal", o.ErrorKind)
+	// A CLI's error names the backend and often the model; keep only its kind,
+	// and say where the full error can be seen.
+	switch {
+	case o.Error == "":
+	case run != "":
+		o.Error = fmt.Sprintf("failed (%s); see the full error with: so runs show %s --reveal", o.ErrorKind, run)
+	default:
+		o.Error = fmt.Sprintf("failed (%s); the run was not recorded, so rerun with --reveal to see the full error", o.ErrorKind)
 	}
 }
 

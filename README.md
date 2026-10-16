@@ -89,7 +89,9 @@ therefore blind by default:
 - The output (markdown and JSON) and the progress lines use the same labels.
 - `so ask --reveal` appends a **Panel key** that maps letters to models, after the fact. The chair
   stays blind even then.
-- Every run is recorded, so you can unblind a panel later (see [Run history](#run-history)).
+- Every run is recorded (unless you set `history = false`), so you can unblind a panel later (see
+  [Run history](#run-history)). A failed panelist's error names its backend, so anonymous output
+  shows only the error's kind; `so runs show <id> --reveal` shows the full error.
 - Set `anonymize = false` in the config to use model names everywhere instead.
 
 ## When a model fails

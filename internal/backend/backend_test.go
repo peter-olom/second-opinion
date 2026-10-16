@@ -203,8 +203,8 @@ func TestClaudeAndPiLockdownFlags(t *testing.T) {
 	}{
 		{"claude, no repo", claudeB, "", []string{"--tools\n\n", "--strict-mcp-config", "--setting-sources\n\n", "--no-session-persistence", "--disable-slash-commands"}, []string{"Read,Grep,Glob"}},
 		{"claude, repo", claudeB, repo, []string{"--tools\nRead,Grep,Glob\n", "--strict-mcp-config", "--setting-sources\n\n"}, nil},
-		{"pi, no repo", piB, "", []string{"--no-tools", "--no-context-files", "--no-extensions", "--no-skills", "--no-approve", "--no-session"}, []string{"--tools"}},
-		{"pi, repo", piB, repo, []string{"--tools\nread,grep,find,ls\n", "--no-extensions", "--no-skills", "--no-approve"}, []string{"--no-tools"}},
+		{"pi, no repo", piB, "", []string{"--no-tools", "--no-context-files", "--no-extensions", "--no-skills", "--no-approve", "--no-session", "--append-system-prompt\n \n"}, []string{"--tools"}},
+		{"pi, repo", piB, repo, []string{"--tools\nread,grep,find,ls\n", "--no-extensions", "--no-skills", "--no-approve", "--append-system-prompt\n \n"}, []string{"--no-tools"}},
 	} {
 		args := argvOf(t, tc.b, tc.workspace)
 		for _, w := range tc.want {

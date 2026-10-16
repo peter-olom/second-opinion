@@ -95,17 +95,17 @@ func TestModeDefaultNeverExposesHome(t *testing.T) {
 	os.MkdirAll(sub, 0o755)
 	t.Chdir(sub)
 
-	if got, err := resolveWorkspace(false, false, &on); err != nil || got != "" {
+	if got, err := resolveWorkspace(context.Background(), false, false, &on); err != nil || got != "" {
 		t.Errorf("mode default in a repo rooted at $HOME = %q, %v; want no access", got, err)
 	}
 	// Explicit --repo from a project folder gets that folder, not all of $HOME.
 	resolvedSub, _ := filepath.EvalSymlinks(sub)
-	if got, err := resolveWorkspace(true, false, nil); err != nil || got != resolvedSub {
+	if got, err := resolveWorkspace(context.Background(), true, false, nil); err != nil || got != resolvedSub {
 		t.Errorf("explicit --repo = %q, %v; want the current folder %q", got, err, resolvedSub)
 	}
 	// From home itself, explicit --repo is refused.
 	t.Chdir(home)
-	if got, err := resolveWorkspace(true, false, nil); err == nil {
+	if got, err := resolveWorkspace(context.Background(), true, false, nil); err == nil {
 		t.Errorf("explicit --repo from home = %q; want a refusal", got)
 	}
 }
@@ -189,7 +189,7 @@ func TestRepoRefusedFromHomeOutsideAnyRepo(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Chdir(home)
-	if got, err := resolveWorkspace(true, false, nil); err == nil {
+	if got, err := resolveWorkspace(context.Background(), true, false, nil); err == nil {
 		t.Errorf("--repo from $HOME = %q; want a refusal", got)
 	}
 }
@@ -252,5 +252,48 @@ func TestDiffRefusedInHomeRootedRepo(t *testing.T) {
 	})
 	if !strings.Contains(stderr, "rooted at your home directory") {
 		t.Errorf("stderr = %q, want a refusal", stderr)
+	}
+}
+
+func TestBoundedOutputDoesNotHangOnGrandchild(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script")
+	}
+	cli := filepath.Join(t.TempDir(), "slow")
+	os.WriteFile(cli, []byte("#!/bin/sh\nsleep 60 &\necho v1\nsleep 60\n"), 0o755)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	start := time.Now()
+	boundedOutput(ctx, cli, "--version")
+	if d := time.Since(start); d > 6*time.Second {
+		t.Errorf("boundedOutput took %s; a grandchild holding stdout must not hang it", d)
+	}
+}
+
+func TestExplicitDashWithUnreadableStdinIsAnError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("socketpair")
+	}
+	fds, err := syscallSocketpair()
+	if err != nil {
+		t.Skip(err)
+	}
+	sock := os.NewFile(uintptr(fds[0]), "sock")
+	peer := os.NewFile(uintptr(fds[1]), "peer")
+	peer.Write([]byte("SOCKET-DATA"))
+	peer.Close()
+	orig := os.Stdin
+	os.Stdin = sock
+	t.Cleanup(func() { os.Stdin = orig; sock.Close() })
+	if _, err := readPrompt([]string{"q", "-"}, nil); err == nil || !strings.Contains(err.Error(), "not a pipe or file") {
+		t.Errorf("err = %v; an explicit - must not silently drop socket stdin", err)
+	}
+}
+
+func TestResolveWorkspaceHonoursCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got, err := resolveWorkspace(ctx, true, false, nil); err == nil {
+		t.Errorf("cancelled discovery returned %q, want the cancellation", got)
 	}
 }

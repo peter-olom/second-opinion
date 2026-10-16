@@ -19,6 +19,10 @@ func (p pi) Run(ctx context.Context, req Request) (string, error) {
 		"--no-prompt-templates",
 		"--no-approve",
 		"--system-prompt", req.System,
+		// pi appends a discovered APPEND_SYSTEM.md (from ~/.pi/agent, or a
+		// trusted project) only when no --append-system-prompt is given, so a
+		// harmless non-empty one keeps the user's file out of the panel.
+		"--append-system-prompt", " ",
 	}
 	if req.Workspace != "" {
 		args = append(args, "--tools", "read,grep,find,ls")

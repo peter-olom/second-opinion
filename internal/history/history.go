@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -51,6 +52,13 @@ func Dir() string {
 }
 
 const idTimeLayout = "20060102-150405"
+
+// runFileName matches the names so gives run records; anything else in the
+// runs folder is not so's, and is never listed, pruned, or uninstalled.
+var runFileName = regexp.MustCompile(`^\d{8}-\d{6}-[0-9a-f]{4,16}\.json$`)
+
+// IsRunFile reports whether name is a run record so created.
+func IsRunFile(name string) bool { return runFileName.MatchString(name) }
 
 // NewID returns an ID that sorts by time, e.g. 20261015-143012-a3f9c2e1.
 func NewID(t time.Time) string {
@@ -100,10 +108,10 @@ func Prune(dir string, cutoff time.Time) {
 		return
 	}
 	for _, e := range entries {
-		id, ok := strings.CutSuffix(e.Name(), ".json")
-		if !ok || e.IsDir() {
+		if !IsRunFile(e.Name()) || !e.Type().IsRegular() {
 			continue
 		}
+		id := strings.TrimSuffix(e.Name(), ".json")
 		t, err := time.ParseInLocation(idTimeLayout, id[:min(len(id), len(idTimeLayout))], time.Local)
 		if err != nil {
 			info, err := e.Info()
@@ -203,8 +211,8 @@ func ids(dir string) ([]string, error) {
 	}
 	var ids []string
 	for _, e := range entries {
-		if name, ok := strings.CutSuffix(e.Name(), ".json"); ok && !e.IsDir() {
-			ids = append(ids, name)
+		if IsRunFile(e.Name()) && e.Type().IsRegular() {
+			ids = append(ids, strings.TrimSuffix(e.Name(), ".json"))
 		}
 	}
 	slices.Sort(ids)

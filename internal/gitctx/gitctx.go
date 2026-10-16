@@ -40,7 +40,8 @@ func Root(ctx context.Context, dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(out), nil
+	// Only git's line ending: a path may legitimately end in whitespace.
+	return strings.TrimSuffix(strings.TrimSuffix(out, "\n"), "\r"), nil
 }
 
 // Context is the rendered review context for a set of changes.
@@ -53,6 +54,9 @@ type Context struct {
 // such as "main" the diff starts at the merge-base, so it shows this branch's
 // work (committed or not) and none of main's later commits.
 func Diff(ctx context.Context, dir, base string) (Context, error) {
+	if strings.HasPrefix(base, "-") {
+		return Context{}, fmt.Errorf("--base %q: a ref cannot start with -", base)
+	}
 	root, err := Root(ctx, dir)
 	if err != nil {
 		if ctx.Err() != nil {

@@ -268,7 +268,7 @@ func planUninstall(cfg string, cfgParentIsLink, all bool) (plan []removal, notes
 				return nil, nil, err
 			}
 			for _, e := range entries {
-				if strings.HasSuffix(e.Name(), ".json") && e.Type().IsRegular() {
+				if history.IsRunFile(e.Name()) && e.Type().IsRegular() {
 					names = append(names, filepath.Join("runs", e.Name()))
 				}
 			}

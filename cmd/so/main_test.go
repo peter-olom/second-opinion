@@ -52,7 +52,7 @@ func TestResolveWorkspace(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Chdir(tt.dir)
-			got, err := resolveWorkspace(tt.explicit, tt.disabled, tt.modeDefault)
+			got, err := resolveWorkspace(context.Background(), tt.explicit, tt.disabled, tt.modeDefault)
 			if err != nil {
 				t.Fatal(err)
 			}

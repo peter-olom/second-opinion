@@ -627,3 +627,27 @@ func TestDiffSummaryNamesAttachedFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestRootKeepsTrailingWhitespace(t *testing.T) {
+	parent := t.TempDir()
+	spaced := filepath.Join(parent, "app ")
+	sibling := filepath.Join(parent, "app")
+	for _, d := range []string{spaced, sibling} {
+		os.MkdirAll(d, 0o755)
+		if out, err := exec.Command("git", "-C", d, "init", "-q").CombinedOutput(); err != nil {
+			t.Fatalf("git init: %v\n%s", err, out)
+		}
+	}
+	got, err := Root(context.Background(), spaced)
+	want, _ := filepath.EvalSymlinks(spaced)
+	if err != nil || got != want {
+		t.Errorf("Root = %q, %v; want %q (not the sibling without the space)", got, err, want)
+	}
+}
+
+func TestDiffRejectsOptionLikeBase(t *testing.T) {
+	dir := newRepo(t)
+	if _, err := Diff(context.Background(), dir, "--output=/tmp/x"); err == nil || !strings.Contains(err.Error(), "cannot start with -") {
+		t.Errorf("err = %v, want an option-like base refused", err)
+	}
+}

@@ -195,7 +195,7 @@ func cmdAsk(ctx context.Context, args []string) int {
 	if len(prompt) > maxPromptBytes {
 		return fail(fmt.Errorf("the prompt with attachments is %d bytes, over the %d-byte limit; attach less", len(prompt), maxPromptBytes))
 	}
-	if p.Workspace, err = resolveWorkspace(*repo, *noRepo, p.Mode.Repo); err != nil {
+	if p.Workspace, err = resolveWorkspace(ctx, *repo, *noRepo, p.Mode.Repo); err != nil {
 		return fail(err)
 	}
 	p.Anonymous = cfg.Anonymous()
@@ -302,7 +302,7 @@ func saveRun(cfg *config.Config, p panel.Panel, prompt string, res panel.Result,
 // outside one. A mode's default only applies inside a git repository, and never
 // to one rooted at the home directory or above it (say, a dotfiles repo in ~),
 // so a panel never silently gets access to all of $HOME.
-func resolveWorkspace(explicit, disabled bool, modeDefault *bool) (string, error) {
+func resolveWorkspace(ctx context.Context, explicit, disabled bool, modeDefault *bool) (string, error) {
 	if disabled || (!explicit && (modeDefault == nil || !*modeDefault)) {
 		return "", nil
 	}
@@ -314,7 +314,11 @@ func resolveWorkspace(explicit, disabled bool, modeDefault *bool) (string, error
 	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
 		cwd = resolved
 	}
-	if root, err := gitctx.Root(context.Background(), cwd); err == nil {
+	root, err := gitctx.Root(ctx, cwd)
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	if err == nil {
 		if !containsHome(root) {
 			return root, nil
 		}
@@ -376,8 +380,15 @@ func readPrompt(args, files []string) (string, error) {
 	// Decided from the arguments themselves, not their text, so an empty
 	// argument (so ask "$q" with $q unset) never reads stdin.
 	useStdin := len(args) == 0 || args[len(args)-1] == "-"
-	if useStdin && len(args) > 0 {
+	explicitDash := len(args) > 0 && args[len(args)-1] == "-"
+	if explicitDash {
 		args = args[:len(args)-1]
+	}
+	if explicitDash && !stdinHasData() {
+		// An explicit "-" asks for stdin. If it is a socket or terminal it is
+		// not read (a harness socket that never closes would hang so), and
+		// silently answering without the data would be worse than an error.
+		return "", errors.New(`"-" asks for stdin, but stdin is not a pipe or file; pipe the data in, or write it to a file and use -f`)
 	}
 	text := strings.TrimSpace(strings.Join(args, " "))
 	if !useStdin && stdinIsFile() {
@@ -715,21 +726,29 @@ func pingTargets(cfg *config.Config, profile string, with []string) ([]config.Pa
 	return targets, nil
 }
 
-// boundedOutput runs a command and returns at most 64 KB of its stdout.
+// boundedOutput runs a command and returns at most 64 KB of its stdout. The
+// output goes through a writer rather than StdoutPipe, so os/exec owns the
+// copy and WaitDelay can close the pipe even if a grandchild holds it open.
 func boundedOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.WaitDelay = 2 * time.Second
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
+	out := &cappedWriter{limit: 64 << 10}
+	cmd.Stdout = out
+	err := cmd.Run()
+	return out.buf, err
+}
+
+// cappedWriter keeps the first limit bytes written to it and discards the rest.
+type cappedWriter struct {
+	buf   []byte
+	limit int
+}
+
+func (w *cappedWriter) Write(p []byte) (int, error) {
+	if room := w.limit - len(w.buf); room > 0 {
+		w.buf = append(w.buf, p[:min(len(p), room)]...)
 	}
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-	out, _ := io.ReadAll(io.LimitReader(stdout, 64<<10))
-	cmd.Process.Kill()
-	cmd.Wait()
-	return out, nil
+	return len(p), nil
 }
 
 // runCanary tests what each model can reach without repo access: it plants a
