@@ -98,9 +98,48 @@ func TestModeDefaultNeverExposesHome(t *testing.T) {
 	if got, err := resolveWorkspace(false, false, &on); err != nil || got != "" {
 		t.Errorf("mode default in a repo rooted at $HOME = %q, %v; want no access", got, err)
 	}
-	resolvedHome, _ := filepath.EvalSymlinks(home)
-	if got, _ := resolveWorkspace(true, false, nil); got != resolvedHome {
-		t.Errorf("explicit --repo = %q, want %q (the user asked for it)", got, resolvedHome)
+	// Explicit --repo from a project folder gets that folder, not all of $HOME.
+	resolvedSub, _ := filepath.EvalSymlinks(sub)
+	if got, err := resolveWorkspace(true, false, nil); err != nil || got != resolvedSub {
+		t.Errorf("explicit --repo = %q, %v; want the current folder %q", got, err, resolvedSub)
+	}
+	// From home itself, explicit --repo is refused.
+	t.Chdir(home)
+	if got, err := resolveWorkspace(true, false, nil); err == nil {
+		t.Errorf("explicit --repo from home = %q; want a refusal", got)
+	}
+}
+
+func TestStdinFileNotReadGetsANote(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "input.txt")
+	os.WriteFile(f, []byte("FILE-INPUT"), 0o644)
+	in, _ := os.Open(f)
+	orig := os.Stdin
+	os.Stdin = in
+	t.Cleanup(func() { os.Stdin = orig; in.Close() })
+
+	var got string
+	stderr := captureStderr(t, func() { got, _ = readPrompt([]string{"question"}, nil) })
+	if strings.Contains(got, "FILE-INPUT") {
+		t.Error("stdin was attached without a trailing -")
+	}
+	if !strings.Contains(stderr, "stdin was not read") {
+		t.Errorf("expected a note about unread stdin, got %q", stderr)
+	}
+}
+
+func TestPromptBudgetStopsBeforeReadingMore(t *testing.T) {
+	defer func(n int) { maxPromptBytes = n }(maxPromptBytes)
+	maxPromptBytes = 100
+	dir := t.TempDir()
+	var files []string
+	for _, n := range []string{"a", "b", "c"} {
+		p := filepath.Join(dir, n)
+		os.WriteFile(p, []byte(strings.Repeat("x", 60)), 0o644)
+		files = append(files, p)
+	}
+	if _, err := readPrompt([]string{"q"}, files); err == nil || !strings.Contains(err.Error(), "over the 100-byte limit") {
+		t.Errorf("err = %v, want the budget to stop collection", err)
 	}
 }
 

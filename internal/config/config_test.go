@@ -229,3 +229,11 @@ func TestParseSpecKeepsAtSignsInModelNames(t *testing.T) {
 		t.Errorf("ParseSpec = %+v; want model with date and effort high", got)
 	}
 }
+
+func TestDefaultChairNestedFallbackRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	os.WriteFile(path, []byte(`default_chair = { backend = "pi", fallback = [{ backend = "pi", fallback = [{ backend = "pi" }] }] }`), 0o644)
+	if _, err := Load(path); err == nil {
+		t.Error("nested fallback on default_chair should be rejected")
+	}
+}

@@ -2,6 +2,7 @@ package panel
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/peter-olom/second-opinion/internal/config"
@@ -106,16 +107,19 @@ func compose(preamble, modeName, instructions, format string) string {
 // ChairPrompt presents the original request and the panel's responses to the chair.
 func ChairPrompt(request string, opinions []Opinion) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "<request>\n%s\n</request>\n", strings.TrimSpace(request))
+	fmt.Fprintf(&b, "<request>\n%s\n</request>\n", neutralizeTags(strings.TrimSpace(request)))
 	for _, o := range opinions {
 		fmt.Fprintf(&b, "\n<response panelist=%q>\n%s\n</response>\n", o.Label, neutralizeTags(strings.TrimSpace(o.Output)))
 	}
 	return b.String()
 }
 
-// neutralizeTags stops a panelist's text from opening or closing a response
-// block in the chair's prompt, which could forge another panelist's answer.
+// structureTag matches any opening or closing request/response tag, in any case.
+var structureTag = regexp.MustCompile(`(?i)<(/?)(response|request)`)
+
+// neutralizeTags stops text inside the chair's prompt (the request or a
+// panelist's answer) from opening or closing a block, which could forge
+// another panelist's answer or end the request early.
 func neutralizeTags(s string) string {
-	r := strings.NewReplacer("<response", "&lt;response", "</response", "&lt;/response", "<request", "&lt;request", "</request", "&lt;/request")
-	return r.Replace(s)
+	return structureTag.ReplaceAllString(s, "&lt;$1$2")
 }

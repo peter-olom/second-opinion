@@ -102,6 +102,7 @@ failure gets a category and a suggested fix in the output (`error_kind` in JSON)
 | `auth` | the CLI is not signed in, or its credentials were rejected | sign in to that CLI |
 | `model` | unknown, retired, or unsupported model | update the profile and test with `so doctor --with` |
 | `timeout` | did not finish within `--timeout` | longer timeout or lower effort |
+| `context` | the prompt is too long for the model | attach less: a narrower `--base`, fewer `-f` files |
 
 The CLIs report errors as free text, so `so` sorts them by matching common phrasings and HTTP status
 codes. Anything it doesn't recognise is `other`. When a fallback answers, the output says so
@@ -135,16 +136,21 @@ The caller always writes the prompt. There are two ways to give the panel more c
   and untracked file. `--diff` covers uncommitted changes. `--base main` covers everything since the
   branch left `main`, via the merge-base, so `main`'s later commits are excluded. Only regular files
   are attached: symlinks are never followed, and binary, very large, or special files are listed but
-  not attached. Git's textconv and external diff drivers are off, so a driver that decrypts files
-  can't put plaintext in the diff. Limits: 1 MB of diff, 256 KB per file, 1.5 MB of files in total.
+  not attached. Git's textconv and external diff drivers are off, and files with a git `filter` or
+  diff driver in `.gitattributes` (git-crypt, transcrypt, …) are left out of both the diff and the
+  attachments, since their working copies may be decrypted. Limits: 1 MB of diff, 256 KB per file,
+  1.5 MB of files in total.
 - **`-f <file>` and stdin.** `-f` attaches a regular file of up to 1 MB. Stdin (up to 2 MB) is read
   only when there is no prompt argument, or when the arguments end with `-`:
-  `git diff | so ask -m review "Review this" -`. The whole prompt is capped at 6 MB.
+  `git diff | so ask -m review "Review this" -`. If stdin is redirected from a file but not read,
+  `so` says so. The whole prompt is capped at 6 MB.
 - **Repository access** runs the panel and the chair in the repository root with read-only tools,
   so they can read callers, definitions, and tests, including ignored files such as `.env`. The
   `review` and `debug` modes enable it by default (`repo = true` in the mode), but only inside a git
   repository that isn't rooted at your home directory (a dotfiles repo in `~` doesn't count).
-  `--repo` turns it on for any mode and `--no-repo` turns it off.
+  `--repo` turns it on for any mode and `--no-repo` turns it off. Inside a home-rooted repository,
+  `--repo` gives the panel the current folder rather than all of `$HOME`, and refuses in `$HOME`
+  itself.
 
 Everything you send goes to the model providers in your profiles. Treat a prompt, its attachments,
 and (with repository access) whatever the panel reads as shared with them.
@@ -166,16 +172,21 @@ load), codex gets `--ignore-user-config --ignore-rules`, and pi gets `--no-exten
 --no-approve` (your pi settings, such as the default model, still apply). Every panelist is told not
 to use tools without repo access.
 
-`so doctor --canary` checks these guarantees on your machine: it plants a file outside each model's
-scratch folder and reports whether the model managed to read it.
+`so doctor --canary` tests this on your machine. It plants a file outside each model's scratch
+folder and asks the model, configured exactly as a panelist without repo access but explicitly
+invited to use any tool it has, to read it. A ✓ means it did not read the file on that run, which is
+evidence rather than proof. In testing, a Codex panelist with this lockdown didn't read the file in
+10 of 10 runs, while the same check caught an unlocked Codex every time.
 
 `so` sets `SECOND_OPINION_DEPTH=1` for every panelist and refuses to start a panel, ping models, or
 uninstall when that variable is present. This stops accidental recursion; it is cooperative, so a
 panelist with a shell could get around it.
 
 Each CLI runs in its own process group, which is killed after the CLI exits (taking any helpers with
-it) and when `so` is interrupted or its terminal closes. On Linux, panelists also die if `so` is
-killed outright. On macOS, `kill -9` of `so` can leave a panelist running. On Windows, only the CLI
+it) and when `so` is interrupted or its terminal closes (unless started with `nohup`). On Linux, if
+`so` itself is killed outright, the CLI process it started dies too, but a process that CLI started
+(npm-installed CLIs run a native binary under Node) can keep running. On macOS, `kill -9` of `so`
+can leave a panelist running. On Windows, only the CLI
 process itself is stopped, and the backends are less tested (npm-installed CLIs run through `.cmd`
 shims, which may mangle multi-line arguments).
 
@@ -251,6 +262,7 @@ Modes ship inside the binary (`internal/assets/modes.toml`) and update with it:
 | `review` | code review: verdict, severity-ranked findings (R1…) with failure scenario, evidence and fix, then test gaps, questions and coverage. The chair merges these into confirmed or plausible findings (F1…), lists rejected findings, and ends with a next-steps checklist | yes |
 | `plan` | critique of a design or plan before building it | no |
 | `debug` | ranked root-cause hypotheses with how to confirm each one | yes |
+| `audit` | whole-project audit: what leaves the machine, promises the code doesn't keep, risky paths, untested code. Same findings structure as `review` | yes |
 
 A mode has `instructions` and a `format` for panelists, plus optional `chair_instructions` and
 `chair_format` for the chair, and `repo` for default repository access. To customise a mode,

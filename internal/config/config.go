@@ -247,7 +247,7 @@ func (c *Config) validate() error {
 		return err
 	}
 	if c.HistoryDays < 0 || c.HistoryDays > 36500 {
-		return fmt.Errorf("history_days must be between 1 and 36500 (set history = false to turn history off)")
+		return fmt.Errorf("history_days must be at most 36500 (leave it out for 7; set history = false to turn history off)")
 	}
 	if c.DefaultProfile != "" {
 		if _, ok := c.Profiles[c.DefaultProfile]; !ok {
@@ -256,6 +256,13 @@ func (c *Config) validate() error {
 	}
 	if _, ok := c.Modes[c.DefaultMode]; !ok {
 		return fmt.Errorf("default_mode %q is not a defined mode", c.DefaultMode)
+	}
+	if c.DefaultChair != nil {
+		for _, f := range c.DefaultChair.Fallback {
+			if len(f.Fallback) > 0 {
+				return fmt.Errorf("default_chair: fallbacks cannot have fallbacks of their own")
+			}
+		}
 	}
 	for name, p := range c.Profiles {
 		if len(p.Panelists) == 0 {

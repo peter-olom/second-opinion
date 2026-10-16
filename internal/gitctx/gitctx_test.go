@@ -211,6 +211,7 @@ func TestDiffDoesNotRunTextconv(t *testing.T) {
 	run(t, dir, "add", ".")
 	run(t, dir, "commit", "-q", "-m", "enc")
 	write(t, dir, "s.enc", "ciphertext-2\n")
+	write(t, dir, "a.go", "package a\n\nfunc A() int { return 3 }\n")
 
 	ctx, err := Diff(context.Background(), dir, "HEAD")
 	if err != nil {
@@ -231,5 +232,73 @@ func TestDiffCancels(t *testing.T) {
 	cancel()
 	if _, err := Diff(ctx, dir, "HEAD"); err == nil {
 		t.Error("a cancelled context should stop collection")
+	}
+}
+
+func TestDiffSkipsGitCryptPlaintext(t *testing.T) {
+	// git-crypt keeps plaintext in the working tree and ciphertext in the
+	// repository. Neither the diff nor the attachments may carry the plaintext.
+	dir := newRepo(t)
+	run(t, dir, "config", "filter.git-crypt.clean", "cat")
+	run(t, dir, "config", "filter.git-crypt.smudge", "cat")
+	write(t, dir, ".gitattributes", "secrets.env filter=git-crypt diff=git-crypt\n")
+	write(t, dir, "secrets.env", "API_KEY=old\n")
+	run(t, dir, "add", ".")
+	run(t, dir, "commit", "-q", "-m", "secrets")
+	write(t, dir, "secrets.env", "API_KEY=PLAINTEXT-SECRET\n")
+	write(t, dir, "new.env", "TOKEN=NEW-PLAINTEXT\n")
+	write(t, dir, ".gitattributes", "*.env filter=git-crypt diff=git-crypt\n")
+	write(t, dir, "a.go", "package a\n\nfunc A() int { return 3 }\n")
+
+	ctx, err := Diff(context.Background(), dir, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"PLAINTEXT-SECRET", "NEW-PLAINTEXT"} {
+		if strings.Contains(ctx.Text, secret) {
+			t.Errorf("filtered file content %s was sent:\n%s", secret, ctx.Text)
+		}
+	}
+	if !strings.Contains(ctx.Text, "secrets.env (git filter or diff driver; may be encrypted)") {
+		t.Errorf("filtered file should be listed:\n%s", ctx.Text)
+	}
+	if !strings.Contains(ctx.Text, "return 3") {
+		t.Errorf("ordinary changes should still be sent:\n%s", ctx.Text)
+	}
+}
+
+func TestDiffIgnoresGitDirFromEnvironment(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, "a.go", "package a\n\nfunc A() int { return 3 }\n")
+	other := newRepo(t)
+	write(t, other, "a.go", "package a\n\nfunc A() int { return 99 }\n")
+	t.Setenv("GIT_DIR", filepath.Join(other, ".git"))
+	t.Setenv("GIT_WORK_TREE", other)
+
+	ctx, err := Diff(context.Background(), dir, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ctx.Text, "return 99") || !strings.Contains(ctx.Text, "return 3") {
+		t.Errorf("collected from GIT_DIR instead of the working directory:\n%s", ctx.Text)
+	}
+}
+
+func TestDiffSkipsFilterOnlyFiles(t *testing.T) {
+	// A filter with no diff driver (a sops-style clean/smudge pair) still
+	// means the working copy may be plaintext.
+	dir := newRepo(t)
+	run(t, dir, "config", "filter.sops.clean", "cat")
+	run(t, dir, "config", "filter.sops.smudge", "cat")
+	write(t, dir, ".gitattributes", "vault.yaml filter=sops\n")
+	write(t, dir, "vault.yaml", "password: PLAINTEXT-VAULT\n")
+	write(t, dir, "a.go", "package a\n\nfunc A() int { return 3 }\n")
+
+	ctx, err := Diff(context.Background(), dir, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ctx.Text, "PLAINTEXT-VAULT") {
+		t.Errorf("filter-only file was sent:\n%s", ctx.Text)
 	}
 }

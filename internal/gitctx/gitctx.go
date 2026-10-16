@@ -74,17 +74,28 @@ func Diff(ctx context.Context, dir, base string) (Context, error) {
 		}
 	}
 
-	// --no-textconv and --no-ext-diff keep configured drivers (which might
-	// decrypt secrets or run arbitrary commands) out of what is sent.
-	diff, diffTruncated, err := git(ctx, root, maxDiffBytes, "diff", "--no-color", "--no-ext-diff", "--no-textconv", from)
-	if err != nil {
-		return Context{}, err
-	}
 	changed, err := gitPaths(ctx, root, "diff", "--name-only", "--diff-filter=d", "-z", from)
 	if err != nil {
 		return Context{}, err
 	}
 	untracked, err := gitPaths(ctx, root, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return Context{}, err
+	}
+	// Files under a git filter or diff driver (git-crypt, transcrypt, ...) can
+	// be plaintext in the working tree while the repository stores ciphertext.
+	// They are left out of both the diff and the attachments.
+	filtered, err := filteredPaths(ctx, root, append(changed[:len(changed):len(changed)], untracked...))
+	if err != nil {
+		return Context{}, err
+	}
+	diffArgs := []string{"diff", "--no-color", "--no-ext-diff", "--no-textconv", from, "--"}
+	for p := range filtered {
+		diffArgs = append(diffArgs, ":(exclude,literal)"+p)
+	}
+	// --no-textconv and --no-ext-diff keep configured drivers (which might
+	// decrypt secrets or run arbitrary commands) out of what is sent.
+	diff, diffTruncated, err := git(ctx, root, maxDiffBytes, diffArgs...)
 	if err != nil {
 		return Context{}, err
 	}
@@ -101,6 +112,10 @@ func Diff(ctx context.Context, dir, base string) (Context, error) {
 	var omitted []string
 	total := 0
 	attach := func(path, status string) {
+		if filtered[path] {
+			omitted = append(omitted, path+" (git filter or diff driver; may be encrypted)")
+			return
+		}
 		if total >= maxFilesBytes {
 			omitted = append(omitted, path+" (attachment budget exceeded)")
 			return
@@ -179,7 +194,7 @@ func readAttachment(path string, limit int) ([]byte, string) {
 func git(ctx context.Context, dir string, limit int, args ...string) (string, bool, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-c", "core.fsmonitor=false"}, args...)...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
+	cmd.Env = append(gitEnv(), "GIT_OPTIONAL_LOCKS=0")
 	var stderr limitedBuffer
 	stderr.limit = 64 << 10
 	cmd.Stderr = &stderr
@@ -211,6 +226,55 @@ func git(ctx context.Context, dir string, limit int, args ...string) (string, bo
 		return "", false, fmt.Errorf("git %s: %w", args[0], waitErr)
 	}
 	return string(out), false, nil
+}
+
+// gitEnv is the environment without variables that would point git at a
+// different repository than the one in the working directory.
+func gitEnv() []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		switch strings.SplitN(kv, "=", 2)[0] {
+		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+			"GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX":
+			continue
+		}
+		env = append(env, kv)
+	}
+	return env
+}
+
+// filteredPaths returns the paths that have a git filter, or a named diff
+// driver, set in .gitattributes.
+func filteredPaths(ctx context.Context, root string, paths []string) (map[string]bool, error) {
+	filtered := map[string]bool{}
+	if len(paths) == 0 {
+		return filtered, nil
+	}
+	cmd := exec.CommandContext(ctx, "git", "-c", "core.fsmonitor=false", "check-attr", "-z", "--stdin", "filter", "diff")
+	cmd.Dir = root
+	cmd.Env = append(gitEnv(), "GIT_OPTIONAL_LOCKS=0")
+	cmd.Stdin = strings.NewReader(strings.Join(paths, "\x00") + "\x00")
+	var out, stderr limitedBuffer
+	out.limit, stderr.limit = 16<<20, 64<<10
+	cmd.Stdout, cmd.Stderr = &out, &stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("git check-attr: %s", strings.TrimSpace(stderr.String()))
+	}
+	// Records are path, attribute, value, each NUL-terminated.
+	f := strings.Split(out.String(), "\x00")
+	for i := 0; i+2 < len(f); i += 3 {
+		path, attr, value := f[i], f[i+1], f[i+2]
+		switch {
+		case attr == "filter" && value != "unspecified" && value != "unset":
+			filtered[path] = true
+		case attr == "diff" && value != "unspecified" && value != "unset" && value != "set":
+			filtered[path] = true
+		}
+	}
+	return filtered, nil
 }
 
 func gitPaths(ctx context.Context, dir string, args ...string) ([]string, error) {

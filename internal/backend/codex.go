@@ -3,9 +3,9 @@ package backend
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -42,7 +42,11 @@ func (c codex) Run(ctx context.Context, req Request) (string, error) {
 		"--cd", req.cwd(),
 		"-c", "developer_instructions=" + tomlString(req.System),
 	}
-	args = append(args, codexLockdown(codexFeatures(ctx, c.opts), req.Workspace != "")...)
+	features, err := codexFeatures(ctx, c.opts)
+	if err != nil {
+		return "", err
+	}
+	args = append(args, codexLockdown(features, req.Workspace != "")...)
 	if req.Model != "" {
 		args = append(args, "--model", req.Model)
 	}
@@ -87,36 +91,39 @@ var codexNetworkFeatures = map[string]bool{
 // which needs code_mode_host; others call the shell tool directly.
 var codexShellFeatures = map[string]bool{"shell_tool": true, "unified_exec": true, "code_mode_host": true}
 
-// codexKnownFeatures is used if `codex features list` is unavailable: the
-// features known to add tools or act outside the sandbox.
-var codexKnownFeatures = []string{
-	"apps", "plugins", "remote_plugin", "plugin_sharing", "browser_use", "browser_use_external",
-	"browser_use_full_cdp_access", "computer_use", "in_app_browser", "multi_agent", "image_generation",
-	"memories", "hooks", "goals", "view_image", "skill_search", "tool_suggest", "code_mode_host",
-	"realtime_conversation", "worktrees", "workspace_dependencies", "shell_tool", "unified_exec",
-}
-
-var codexFeatureList struct {
+type featureCache struct {
 	once  sync.Once
 	names []string
+	err   error
 }
+
+var codexFeatureList featureCache
 
 // codexFeatures lists every feature this Codex knows about, whatever its
 // state. The state column is ignored: it reflects the user's config, which
-// panelists run without.
-func codexFeatures(ctx context.Context, o Options) []string {
+// panelists run without. If the list is unavailable the panelist fails
+// rather than run with Codex's tools unlocked: guessing names is no
+// alternative, since Codex rejects a feature it does not know.
+func codexFeatures(ctx context.Context, o Options) ([]string, error) {
 	codexFeatureList.once.Do(func() {
-		ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		out, err := exec.CommandContext(ctx, Command("codex", o), "features", "list").Output()
-		if err == nil {
-			codexFeatureList.names = parseCodexFeatures(string(out))
+		env := os.Environ()
+		for k, v := range o.Env {
+			env = append(env, k+"="+v)
 		}
-		if len(codexFeatureList.names) == 0 {
-			codexFeatureList.names = codexKnownFeatures
+		out, err := execCLI(ctx, Command("codex", o), []string{"features", "list"}, os.TempDir(), env, "")
+		names := parseCodexFeatures(string(out))
+		switch {
+		case err != nil:
+			codexFeatureList.err = fmt.Errorf("codex: cannot list its features to disable its tools (%v); update Codex", err)
+		case len(names) == 0:
+			codexFeatureList.err = errors.New("codex: `codex features list` returned nothing; cannot disable its tools, so not running it")
+		default:
+			codexFeatureList.names = names
 		}
 	})
-	return codexFeatureList.names
+	return codexFeatureList.names, codexFeatureList.err
 }
 
 // parseCodexFeatures reads "name  stage  true|false" lines.

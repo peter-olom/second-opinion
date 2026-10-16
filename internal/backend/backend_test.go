@@ -114,3 +114,52 @@ func TestParseCodexFeatures(t *testing.T) {
 		t.Errorf("parseCodexFeatures = %v", got)
 	}
 }
+
+func TestCodexFailsClosedWithoutFeatureList(t *testing.T) {
+	codexFeatureList = featureCache{}
+	t.Cleanup(func() { codexFeatureList = featureCache{} })
+	// A codex that cannot list its features must not be run with tools unlocked.
+	marker := filepath.Join(t.TempDir(), "ran-exec")
+	cli := script(t, `if [ "$1" = features ]; then echo "unknown command" >&2; exit 2; fi; touch `+marker+`; echo answer`)
+	_, err := codex{Options{Command: cli}}.Run(context.Background(), Request{Prompt: "q", Dir: t.TempDir()})
+	if err == nil || !strings.Contains(err.Error(), "cannot list its features") {
+		t.Errorf("err = %v, want a refusal", err)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Error("codex exec ran without its tools locked down")
+	}
+}
+
+func TestHelperHoldingStdinDoesNotLoseTheAnswer(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process groups are Unix-only")
+	}
+	// The CLI answers without reading its (large) prompt, while a helper keeps
+	// stdin open. The answer must come back promptly and without error.
+	cli := script(t, "sleep 30 <&0 & echo answer\n")
+	start := time.Now()
+	out, err := run(context.Background(), "x", Options{Command: cli}, t.TempDir(), nil, strings.Repeat("p", 1<<20))
+	if err != nil || strings.TrimSpace(string(out)) != "answer" {
+		t.Errorf("out = %q, err = %v", out, err)
+	}
+	if d := time.Since(start); d > 4*time.Second {
+		t.Errorf("took %s; the stdin writer should not wait on the helper", d)
+	}
+}
+
+func TestTailBufferManySmallWrites(t *testing.T) {
+	b := &tailBuffer{limit: 100}
+	var all strings.Builder
+	for i := range 10000 {
+		line := strings.Repeat(string(rune('a'+i%26)), 7) + "\n"
+		b.Write([]byte(line))
+		all.WriteString(line)
+	}
+	want := all.String()[all.Len()-100:]
+	if got := b.String(); got != want {
+		t.Errorf("tail = %q, want %q", got, want)
+	}
+	if len(b.buf) > 200 {
+		t.Errorf("buffer grew to %d bytes, want at most twice the limit", len(b.buf))
+	}
+}

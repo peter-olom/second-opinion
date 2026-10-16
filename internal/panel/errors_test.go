@@ -116,3 +116,13 @@ func TestClassifyContextBeforeQuota(t *testing.T) {
 		}
 	}
 }
+
+func TestQuotaAtTheEndBeatsTranscriptMentions(t *testing.T) {
+	msg := "codex: exit status 1\n" +
+		"exec rg 'context window' internal/panel/errors.go\n" +
+		"KindContext ... context window|prompt is too long ...\n" +
+		"ERROR: exceeded retry limit, last status: 429 Too Many Requests"
+	if got := classify(errors.New(msg)); got != KindQuota {
+		t.Errorf("classify = %s, want quota so a fallback runs", got)
+	}
+}
