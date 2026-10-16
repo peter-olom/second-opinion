@@ -100,10 +100,11 @@ when you report the result.
 
 ## Using the answer
 
-- Panels are anonymous. Each run assigns the labels `Panelist A`, `B`, … at random, so you cannot
+- Panels are anonymous by default (`anonymize = false` turns this off). Each run assigns the labels `Panelist A`, `B`, … at random, so you cannot
   tell which model said what, and neither can the chair. Judge each response on its reasoning and
   evidence, and don't try to work out who wrote it.
-- Every answer starts with a run ID, and each run is kept locally for 7 days. If the user asks which
+- Unless history is turned off, every answer starts with a run ID, and each run is kept locally
+  (7 days by default). If the user asks which
   model said what, run `so runs show <id> --reveal`. Don't unblind a panel otherwise. `so runs`
   lists recent runs, and `so runs show <id> --prompt` shows exactly what the panel was sent.
 - Weigh the answer, don't just follow it. Panelists lack your context and can be confidently

@@ -260,3 +260,46 @@ func TestPiAppendPromptIsAScratchFile(t *testing.T) {
 		t.Errorf("append file content = %q, %v; want a harmless empty file", content, err)
 	}
 }
+
+func TestClaudeFailureUsesItsJSONResult(t *testing.T) {
+	// Stderr has noise; the real error is in the JSON on stdout.
+	cli := script(t, `cat >/dev/null
+echo '(node:1) ExperimentalWarning: something' >&2
+echo '{"type":"result","subtype":"error","is_error":true,"duration_ms":429,"result":"Claude AI usage limit reached"}'
+exit 1`)
+	_, err := claude{Options{Command: cli}}.Run(context.Background(), Request{Prompt: "q", Dir: t.TempDir()})
+	if err == nil || !strings.HasSuffix(strings.TrimSpace(err.Error()), "Claude AI usage limit reached") {
+		t.Errorf("err = %v; the JSON result should be the last line", err)
+	}
+}
+
+func TestCodexArgv(t *testing.T) {
+	codexFeatureList = featureCache{}
+	t.Cleanup(func() { codexFeatureList = featureCache{} })
+	argsFile := filepath.Join(t.TempDir(), "args")
+	cli := script(t, `if [ "$1" = features ]; then printf 'apps  stable  true\nshell_tool  stable  true\n'; exit 0; fi
+printf '%s\n' "$@" > `+argsFile+`
+while [ $# -gt 0 ]; do [ "$1" = --output-last-message ] && out=$2; shift; done
+cat >/dev/null; echo ok > "$out"`)
+	for _, ws := range []string{"", t.TempDir()} {
+		dir := t.TempDir()
+		if _, err := (codex{Options{Command: cli}}).Run(context.Background(), Request{Prompt: "q", Dir: dir, Workspace: ws}); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(argsFile)
+		args := string(data)
+		cwd := dir
+		if ws != "" {
+			cwd = ws
+		}
+		for _, want := range []string{"--sandbox\nread-only\n", "--ignore-user-config\n", "--ignore-rules\n", "--ephemeral\n", "--cd\n" + cwd + "\n", "--disable\napps\n", `web_search="disabled"`} {
+			if !strings.Contains(args, want) {
+				t.Errorf("workspace %q: missing %q in:\n%s", ws, want, args)
+			}
+		}
+		hasShellOff := strings.Contains(args, "--disable\nshell_tool\n")
+		if (ws == "") != hasShellOff {
+			t.Errorf("workspace %q: shell_tool disabled = %v", ws, hasShellOff)
+		}
+	}
+}

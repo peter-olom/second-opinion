@@ -171,10 +171,12 @@ func execCLI(ctx context.Context, bin string, args []string, dir string, env []s
 		if detail == "" {
 			detail = tail(stdout.String(), 15)
 		}
+		// stdout is returned too: a CLI may report its error there (claude's
+		// JSON result), which the caller can parse.
 		if detail != "" {
-			return nil, fmt.Errorf("%s: %w\n%s", filepath.Base(bin), err, detail)
+			return stdout.Bytes(), fmt.Errorf("%s: %w\n%s", filepath.Base(bin), err, detail)
 		}
-		return nil, fmt.Errorf("%s: %w", filepath.Base(bin), err)
+		return stdout.Bytes(), fmt.Errorf("%s: %w", filepath.Base(bin), err)
 	}
 	if stdout.Truncated() {
 		return nil, fmt.Errorf("%s: output exceeded %d bytes", filepath.Base(bin), maxStdout)

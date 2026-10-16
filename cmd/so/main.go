@@ -509,6 +509,12 @@ func cmdProfiles(args []string) int {
 	if len(cfg.Profiles) == 0 {
 		return fail(errNoProfiles(cfg))
 	}
+	for _, name := range cfg.ProfileNames() {
+		p := cfg.Profiles[name]
+		if err := (panel.Panel{Panelists: p.Panelists, Chair: p.Chair}).Validate(); err != nil {
+			return fail(fmt.Errorf("profile %q: %w", name, err))
+		}
+	}
 	defaultName, _, _ := cfg.Profile("")
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	for _, name := range cfg.ProfileNames() {

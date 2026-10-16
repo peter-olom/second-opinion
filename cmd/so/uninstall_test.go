@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/peter-olom/second-opinion/internal/backend"
+	"github.com/peter-olom/second-opinion/internal/history"
 )
 
 type fixture struct {
@@ -502,7 +503,10 @@ func TestUninstallAllResolvesDotDotLikeTheFilesystem(t *testing.T) {
 func TestUninstallKeepsHardlinkedConfig(t *testing.T) {
 	f := newFixture(t)
 	// The config is also reachable as a run file. Without --all it must survive.
-	alias := filepath.Join(f.state, "runs/20261015-130000-cfg0.json")
+	alias := filepath.Join(f.state, "runs/20261015-130000-cf00.json")
+	if !history.IsRunFile(filepath.Base(alias)) {
+		t.Fatal("the alias must look like a run record, or uninstall would never consider it")
+	}
 	if err := os.Link(f.cfg, alias); err != nil {
 		t.Skip("hard links unavailable:", err)
 	}

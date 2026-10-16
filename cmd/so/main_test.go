@@ -15,7 +15,7 @@ import (
 
 func TestAskRefusesInsidePanelist(t *testing.T) {
 	t.Setenv(backend.EnvGuard, "1")
-	if code := run(context.Background(), []string{"ask", "hello"}); code != 3 {
+	if code := run(context.Background(), []string{"ask", "--config", fakePiConfig(t), "-w", "pi:x", "hello"}); code != 3 {
 		t.Errorf("exit code = %d, want 3", code)
 	}
 }

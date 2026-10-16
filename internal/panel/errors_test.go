@@ -145,3 +145,13 @@ func TestTranscriptMentionsDoNotDecideTheKind(t *testing.T) {
 		t.Errorf("classify = %s, want quota from the error line", got)
 	}
 }
+
+func TestNumberedTranscriptLinesAreNotErrors(t *testing.T) {
+	msg := "codex: exit status 1\n" +
+		"429:    if retries > 3 {\n" +
+		"   401\tcheckToken(apiKey)\n" +
+		"ERROR: stream disconnected before completion"
+	if got := classify(errors.New(msg)); got != KindOther {
+		t.Errorf("classify = %s, want other: grep -n / cat -n lines are not errors", got)
+	}
+}

@@ -327,3 +327,18 @@ func TestAnonymousFailureWithoutHistory(t *testing.T) {
 		t.Errorf("with history off, the hint must not point to a run:\n%s", out)
 	}
 }
+
+func TestProfilesRejectsUnknownBackend(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "config.toml")
+	os.WriteFile(cfg, []byte("[profiles.p]\npanelists = [{ backend = \"cladue\", model = \"opus\" }]\n"), 0o644)
+	stderr := captureStderr(t, func() {
+		captureStdout(t, func() {
+			if code := run(context.Background(), []string{"profiles", "--config", cfg}); code == 0 {
+				t.Error("so profiles accepted an unknown backend")
+			}
+		})
+	})
+	if !strings.Contains(stderr, "cladue") {
+		t.Errorf("stderr = %q, want the bad backend named", stderr)
+	}
+}

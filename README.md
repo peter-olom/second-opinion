@@ -142,8 +142,9 @@ The caller always writes the prompt. There are two ways to give the panel more c
   not attached. Git's textconv and external diff drivers are off, and files with a git `filter` in
   `.gitattributes` (git-crypt, transcrypt, sops-style filters, LFS, …) are left out of both the diff
   and the attachments, since their working copies may be decrypted. If there are too many changed
-  files to check this, `--diff` stops rather than send a partial check. Limits: 1 MB of diff, 256 KB per file,
-  1.5 MB of files in total.
+  files to check this, `--diff` stops rather than send a partial check. Untracked files are attached
+  unless git ignores them, so add anything other tools leave in your working tree to `.gitignore` or
+  your global excludes. Limits: 1 MB of diff, 256 KB per file, 1.5 MB of files in total.
 - **`-f <file>` and stdin.** `-f` attaches a regular file of up to 1 MB. Stdin (up to 2 MB) is read
   only when there is no prompt argument, or when the arguments end with `-`:
   `git diff | so ask -m review "Review this" -`. If stdin is redirected from a file but not read,

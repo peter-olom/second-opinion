@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // claude runs Claude Code in print mode with no MCP servers, settings, or session.
@@ -34,10 +35,7 @@ func (c claude) Run(ctx context.Context, req Request) (string, error) {
 		args = append(args, "--effort", e)
 	}
 
-	out, err := run(ctx, "claude", c.opts, req.cwd(), args, req.Prompt)
-	if err != nil {
-		return "", err
-	}
+	out, runErr := run(ctx, "claude", c.opts, req.cwd(), args, req.Prompt)
 	var res struct {
 		Result  string `json:"result"`
 		IsError bool   `json:"is_error"`
@@ -46,7 +44,17 @@ func (c claude) Run(ctx context.Context, req Request) (string, error) {
 	if i := bytes.IndexByte(out, '{'); i > 0 {
 		out = out[i:]
 	}
-	if err := json.Unmarshal(out, &res); err != nil {
+	parseErr := json.Unmarshal(out, &res)
+	if runErr != nil {
+		// Claude reports its errors (usage limits, unknown models) in the JSON
+		// result. Put that last, where classification looks first, so stderr
+		// noise or a numeric JSON field cannot decide the kind.
+		if parseErr == nil && res.Result != "" {
+			return "", fmt.Errorf("%w\nclaude: %s: %s", runErr, res.Subtype, oneLine(res.Result))
+		}
+		return "", runErr
+	}
+	if parseErr != nil {
 		return "", fmt.Errorf("claude: unexpected output: %s", truncate(out, 500))
 	}
 	if res.IsError {
@@ -54,6 +62,8 @@ func (c claude) Run(ctx context.Context, req Request) (string, error) {
 	}
 	return res.Result, nil
 }
+
+func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 // claudeEffort maps to Claude Code's levels: low, medium, high, xhigh, max.
 func claudeEffort(e string) string {

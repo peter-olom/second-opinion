@@ -70,7 +70,7 @@ func classify(err error) ErrorKind {
 }
 
 // errorLine matches lines that state an error rather than quote one.
-var errorLine = regexp.MustCompile(`(?i)^\s*(\S+:\s+)?(error|fatal|failed)\b|^\s*\{"type":\s*"error"|^\s*\d{3}[\s:]|^\s*\S+: exit status`)
+var errorLine = regexp.MustCompile(`(?i)^\s*(\S+:\s+)?(error|fatal|failed)\b|^\s*\{"type":\s*"error"|^\s*[45]\d\d(?-i:\s+[A-Z][A-Za-z]|:?\s*\{)|^\s*\S+: exit status`)
 
 func match(s string) ErrorKind {
 	for _, p := range kindPatterns {
