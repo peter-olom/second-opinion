@@ -49,8 +49,8 @@ func (c claude) Run(ctx context.Context, req Request) (string, error) {
 		// Claude reports its errors (usage limits, unknown models) in the JSON
 		// result. Put that last, where classification looks first, so stderr
 		// noise or a numeric JSON field cannot decide the kind.
-		if parseErr == nil && res.Result != "" {
-			return "", fmt.Errorf("%w\nclaude: %s: %s", runErr, res.Subtype, oneLine(res.Result))
+		if parseErr == nil && res.Result != "" && (res.IsError || res.Subtype != "success") {
+			return "", fmt.Errorf("%w\nclaude: %s: %s", runErr, res.Subtype, truncate([]byte(oneLine(res.Result)), 500))
 		}
 		return "", runErr
 	}

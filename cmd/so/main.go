@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"text/tabwriter"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/pflag"
 
@@ -515,6 +516,11 @@ func cmdProfiles(args []string) int {
 			return fail(fmt.Errorf("profile %q: %w", name, err))
 		}
 	}
+	if cfg.DefaultChair != nil {
+		if err := (panel.Panel{Chair: cfg.DefaultChair}).Validate(); err != nil {
+			return fail(fmt.Errorf("default_chair: %w", err))
+		}
+	}
 	defaultName, _, _ := cfg.Profile("")
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	for _, name := range cfg.ProfileNames() {
@@ -627,6 +633,9 @@ func cmdDoctor(ctx context.Context, args []string) int {
 		out, _ := boundedOutput(vctx, path, "--version")
 		cancel()
 		v, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+		if v == "" {
+			v = "(version unknown)"
+		}
 		fmt.Printf("✓ %-7s %s  %s\n", name, path, v)
 	}
 	if found == 0 {
@@ -700,6 +709,10 @@ func pingTargets(cfg *config.Config, profile string, with []string) ([]config.Pa
 			if p.Chair != nil {
 				all = append(all, *p.Chair)
 			}
+		}
+		// The default chair runs for every ad-hoc --with panel.
+		if profile == "" && cfg.DefaultChair != nil {
+			all = append(all, *cfg.DefaultChair)
 		}
 	}
 	var targets []config.Panelist
@@ -810,10 +823,14 @@ func runCanary(ctx context.Context, cfg *config.Config, targets []config.Panelis
 
 func oneLine(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > 60 {
-		return s[:60] + "…"
+	if len(s) <= 60 {
+		return s
 	}
-	return s
+	n := 60
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n] + "…"
 }
 
 // skillDirs are the user-level skill directories of the supported harnesses,

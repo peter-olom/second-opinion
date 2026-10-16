@@ -342,3 +342,29 @@ func TestProfilesRejectsUnknownBackend(t *testing.T) {
 		t.Errorf("stderr = %q, want the bad backend named", stderr)
 	}
 }
+
+func TestDefaultChairIsValidatedAndPinged(t *testing.T) {
+	bad := filepath.Join(t.TempDir(), "config.toml")
+	os.WriteFile(bad, []byte("default_chair = { backend = \"cladue\" }\n[profiles.p]\npanelists = [{ backend = \"pi\", model = \"x\" }]\n"), 0o644)
+	captureStdout(t, func() {
+		captureStderr(t, func() {
+			if code := run(context.Background(), []string{"profiles", "--config", bad}); code == 0 {
+				t.Error("so profiles accepted a default_chair with an unknown backend")
+			}
+		})
+	})
+
+	good := filepath.Join(t.TempDir(), "config.toml")
+	os.WriteFile(good, []byte("default_chair = { backend = \"claude\", model = \"opus\" }\n[profiles.p]\npanelists = [{ backend = \"pi\", model = \"x\" }]\n"), 0o644)
+	targets, err := pingTargets(loadConfigForTest(t, good), "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, p := range targets {
+		found = found || (p.Backend == "claude" && p.Model == "opus")
+	}
+	if !found {
+		t.Errorf("doctor --ping targets %v should include the default chair", targets)
+	}
+}

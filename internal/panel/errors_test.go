@@ -155,3 +155,23 @@ func TestNumberedTranscriptLinesAreNotErrors(t *testing.T) {
 		t.Errorf("classify = %s, want other: grep -n / cat -n lines are not errors", got)
 	}
 }
+
+func TestTabIndentedNumberedLinesAreNotErrors(t *testing.T) {
+	for _, line := range []string{"   429\t\tName     string", "   503\t{", "   401\tCheckToken(apiKey)", "  404 NotFound handler"} {
+		msg := "codex: exit status 1\n" + line + "\nERROR: stream disconnected before completion"
+		if got := classify(errors.New(msg)); got != KindOther {
+			t.Errorf("transcript line %q made the kind %s, want other", line, got)
+		}
+	}
+}
+
+func TestClaudeJSONLineDoesNotDecideTheKind(t *testing.T) {
+	// With empty stderr, so's message holds claude's whole JSON line (with
+	// duration_ms 429) and then the extracted result. The result decides.
+	msg := "claude: exit status 1\n" +
+		`{"type":"result","subtype":"error","is_error":true,"duration_ms":429,"result":"There's an issue with the selected model (opus-9)."}` + "\n" +
+		"claude: error: There's an issue with the selected model (opus-9)."
+	if got := classify(errors.New(msg)); got != KindModel {
+		t.Errorf("classify = %s, want model", got)
+	}
+}

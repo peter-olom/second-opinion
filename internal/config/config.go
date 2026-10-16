@@ -266,7 +266,7 @@ func (c *Config) validate() error {
 		return err
 	}
 	if c.HistoryDays < 0 || c.HistoryDays > 36500 {
-		return fmt.Errorf("history_days must be between 1 and 36500 (leave it out for 7; set history = false to turn history off)")
+		return fmt.Errorf("history_days must be from 1 to 36500, or left out for 7 (set history = false to turn history off)")
 	}
 	if c.DefaultProfile != "" {
 		if _, ok := c.Profiles[c.DefaultProfile]; !ok {

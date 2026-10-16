@@ -181,6 +181,10 @@ The Codex lockdown asks Codex for its feature list (`codex features list`), whic
 `~/.codex/config.toml`. If that fails, Codex panelists stop with an error rather than run with
 their tools unlocked.
 
+A reviewed repository's own `.codex/config.toml` (MCP servers, features) and pi files under
+`.pi/` (extensions, settings) are not loaded: in testing, an MCP server and an extension planted in
+a repository did not run while a panel reviewed it.
+
 These flags assume no overriding `args` in a `[backends.*]` section of your config: those are
 appended after `so`'s own flags, so they can undo the lockdown.
 

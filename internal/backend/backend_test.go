@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -300,6 +301,60 @@ cat >/dev/null; echo ok > "$out"`)
 		hasShellOff := strings.Contains(args, "--disable\nshell_tool\n")
 		if (ws == "") != hasShellOff {
 			t.Errorf("workspace %q: shell_tool disabled = %v", ws, hasShellOff)
+		}
+	}
+}
+
+func TestClaudeSuccessResultIsNotAnError(t *testing.T) {
+	// A non-zero exit after a successful answer must not turn the answer into
+	// the error text.
+	cli := script(t, `cat >/dev/null
+echo '{"type":"result","subtype":"success","is_error":false,"result":"A long answer that mentions rate limit handling."}'
+exit 1`)
+	_, err := claude{Options{Command: cli}}.Run(context.Background(), Request{Prompt: "q", Dir: t.TempDir()})
+	if err == nil {
+		t.Fatal("want an error for the non-zero exit")
+	}
+	lines := strings.Split(strings.TrimSpace(err.Error()), "\n")
+	if strings.HasPrefix(lines[len(lines)-1], "claude: success:") {
+		t.Errorf("the successful answer became the error's last line: %q", err)
+	}
+}
+
+func TestCancelAndTimeoutKillTheCLIAndHelpers(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process groups are Unix-only")
+	}
+	for _, tc := range []struct {
+		name string
+		ctx  func() (context.Context, context.CancelFunc)
+		want error
+	}{
+		{"timeout", func() (context.Context, context.CancelFunc) {
+			return context.WithTimeout(context.Background(), 500*time.Millisecond)
+		}, ErrTimeout},
+		{"cancel", func() (context.Context, context.CancelFunc) {
+			ctx, cancel := context.WithCancel(context.Background())
+			time.AfterFunc(500*time.Millisecond, cancel)
+			return ctx, cancel
+		}, context.Canceled},
+	} {
+		pidFile := filepath.Join(t.TempDir(), "pid")
+		cli := script(t, "sleep 30 & echo $! > "+pidFile+"\nsleep 30\n")
+		ctx, cancel := tc.ctx()
+		start := time.Now()
+		_, err := run(ctx, "x", Options{Command: cli}, t.TempDir(), nil, "")
+		cancel()
+		if !errors.Is(err, tc.want) {
+			t.Errorf("%s: err = %v, want %v", tc.name, err, tc.want)
+		}
+		if d := time.Since(start); d > 5*time.Second {
+			t.Errorf("%s: took %s", tc.name, d)
+		}
+		time.Sleep(200 * time.Millisecond)
+		data, _ := os.ReadFile(pidFile)
+		if p, err := os.FindProcess(atoi(strings.TrimSpace(string(data)))); err == nil && p.Signal(nil0()) == nil {
+			t.Errorf("%s: helper still running", tc.name)
 		}
 	}
 }
