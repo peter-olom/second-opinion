@@ -80,9 +80,22 @@ func Diff(ctx context.Context, dir, base string) (Context, error) {
 	// Every path in the diff, deletions included, and the untracked files.
 	// A truncated list would let files escape the filter check below, so it
 	// is an error rather than a partial answer.
-	inDiff, err := gitPaths(ctx, root, "diff", "--name-only", "--no-renames", "-z", from)
+	// One listing gives every path and its status, so the attachments, the
+	// filter check, and the diff allowlist all agree on the same set.
+	statuses, err := gitPaths(ctx, root, "diff", "--name-status", "--no-renames", "-z", from)
 	if err != nil {
 		return Context{}, err
+	}
+	if len(statuses)%2 != 0 {
+		return Context{}, errors.New("--diff: could not read git's list of changed files")
+	}
+	var inDiff, changed []string
+	for i := 0; i < len(statuses); i += 2 {
+		status, path := statuses[i], statuses[i+1]
+		inDiff = append(inDiff, path)
+		if !strings.HasPrefix(status, "D") {
+			changed = append(changed, path)
+		}
 	}
 	untracked, err := gitPaths(ctx, root, "ls-files", "--others", "--exclude-standard", "-z")
 	if err != nil {
@@ -92,10 +105,6 @@ func Diff(ctx context.Context, dir, base string) (Context, error) {
 	// plaintext in the working tree while the repository stores ciphertext.
 	// They are left out of both the diff and the attachments.
 	filtered, err := filteredPaths(ctx, root, append(inDiff[:len(inDiff):len(inDiff)], untracked...))
-	if err != nil {
-		return Context{}, err
-	}
-	changed, err := gitPaths(ctx, root, "diff", "--name-only", "--no-renames", "--diff-filter=d", "-z", from)
 	if err != nil {
 		return Context{}, err
 	}
@@ -122,7 +131,7 @@ func Diff(ctx context.Context, dir, base string) (Context, error) {
 		}
 		return true
 	}, "-c", "core.quotePath=false", "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false",
-		"diff", "--src-prefix=a/", "--dst-prefix=b/",
+		"diff", "--src-prefix=a/", "--dst-prefix=b/", "--submodule=short",
 		"--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", from)
 	if err != nil {
 		return Context{}, err
@@ -342,6 +351,7 @@ func gitLines(ctx context.Context, dir string, limit int, fn func(string) bool, 
 	}
 	r := bufio.NewReader(io.LimitReader(stdout, int64(limit)+1))
 	read, stopped := 0, false
+	var readErr error
 	for {
 		line, err := r.ReadString('\n')
 		read += len(line)
@@ -350,6 +360,9 @@ func gitLines(ctx context.Context, dir string, limit int, fn func(string) bool, 
 			break
 		}
 		if err != nil {
+			if err != io.EOF {
+				readErr = err
+			}
 			break
 		}
 	}
@@ -362,11 +375,13 @@ func gitLines(ctx context.Context, dir string, limit int, fn func(string) bool, 
 		return false, ctx.Err()
 	case stopped:
 		return true, nil
+	case readErr != nil:
+		return false, fmt.Errorf("reading git output: %w", readErr)
 	case waitErr != nil:
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return false, fmt.Errorf("git %s: %s", args[len(args)-1], msg)
+			return false, fmt.Errorf("git diff: %s", msg)
 		}
-		return false, fmt.Errorf("git: %w", waitErr)
+		return false, fmt.Errorf("git diff: %w", waitErr)
 	}
 	return false, nil
 }

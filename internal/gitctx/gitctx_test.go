@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -494,5 +495,78 @@ func TestDropFilesAllowlistAndBoundaries(t *testing.T) {
 	}
 	if !strings.Contains(got, "+ok\n") || !strings.Contains(got, "+ok2") {
 		t.Errorf("checked sections should be kept:\n%s", got)
+	}
+}
+
+func TestDiffFilteredFileChangedMidCollection(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a shell wrapper for git")
+	}
+	dir := filteredRepo(t)
+	run(t, dir, "checkout", "--", "db.secret") // the filtered file is clean when listed
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A git wrapper that logs every call and, just before the diff itself
+	// runs, writes plaintext into the filtered file: the race the review found.
+	bin := t.TempDir()
+	logFile := filepath.Join(bin, "calls")
+	wrapper := "#!/bin/sh\necho \"$*\" >> " + logFile + "\n" +
+		"case \"$*\" in *--src-prefix=a/*) echo 'PASSWORD=RACED-PLAINTEXT' > " + filepath.Join(dir, "db.secret") + ";; esac\n" +
+		"exec " + realGit + " \"$@\"\n"
+	os.WriteFile(filepath.Join(bin, "git"), []byte(wrapper), 0o755)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ctx, err := Diff(context.Background(), dir, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ctx.Text, "RACED-PLAINTEXT") {
+		t.Errorf("a filtered file changed after the check was sent:\n%s", ctx.Text)
+	}
+	if !strings.Contains(ctx.Text, "return 3") {
+		t.Errorf("the ordinary change should still be sent:\n%s", ctx.Text)
+	}
+	calls, _ := os.ReadFile(logFile)
+	if n := strings.Count(string(calls), "--name-status") + strings.Count(string(calls), "--name-only"); n != 1 {
+		t.Errorf("listed changed files %d times, want once:\n%s", n, calls)
+	}
+}
+
+func TestDiffSubmodulesUseShortFormat(t *testing.T) {
+	sub := newRepo(t)
+	marker := filepath.Join(t.TempDir(), "textconv-ran")
+	write(t, sub, ".gitattributes", "*.enc diff=leak\n")
+	write(t, sub, "s.enc", "v1\n")
+	run(t, sub, "add", ".")
+	run(t, sub, "commit", "-q", "-m", "enc")
+
+	dir := newRepo(t)
+	run(t, dir, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "sub")
+	run(t, dir, "commit", "-q", "-m", "add sub")
+	subWT := filepath.Join(dir, "sub")
+	run(t, subWT, "config", "diff.leak.textconv", "sh -c 'touch "+marker+"; cat'")
+	write(t, subWT, "s.enc", "v2\n") // a dirty submodule
+	run(t, subWT, "commit", "-q", "-am", "bump")
+	write(t, subWT, "s.enc", "v3\n")
+	write(t, dir, "a.go", "package a\n\nfunc A() int { return 3 }\n")
+
+	for _, mode := range []string{"log", "diff"} {
+		run(t, dir, "config", "diff.submodule", mode)
+		ctx, err := Diff(context.Background(), dir, "HEAD")
+		if err != nil {
+			t.Fatalf("diff.submodule=%s: %v", mode, err)
+		}
+		diff := ctx.Text[:strings.Index(ctx.Text, "</git-diff>")]
+		if !strings.Contains(diff, "diff --git a/sub b/sub") || !strings.Contains(diff, "Subproject commit") {
+			t.Errorf("diff.submodule=%s: want a short submodule section:\n%s", mode, diff)
+		}
+		if strings.Contains(diff, "Submodule sub") || strings.Contains(diff, "a/sub/s.enc") {
+			t.Errorf("diff.submodule=%s: config leaked into the format:\n%s", mode, diff)
+		}
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("a textconv driver inside the submodule ran")
 	}
 }

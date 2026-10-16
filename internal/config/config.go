@@ -82,7 +82,7 @@ func ParseSpec(spec string) (Panelist, error) {
 		case effortLevels[suffix]:
 			p.Effort, s = suffix, s[:i]
 		case isWord(suffix):
-			return p, fmt.Errorf("invalid effort %q in %q: want one of off, minimal, low, medium, high, xhigh, max", suffix, spec)
+			return p, fmt.Errorf("invalid effort %q in %q: want one of off, none, minimal, low, medium, high, xhigh, max", suffix, spec)
 		}
 	}
 	p.Backend, p.Model, _ = strings.Cut(s, ":")
