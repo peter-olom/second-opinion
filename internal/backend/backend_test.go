@@ -479,12 +479,22 @@ func TestClaudeMentionsAreDefused(t *testing.T) {
 func TestClaudeGetsDefusedPromptAndReadDeny(t *testing.T) {
 	dir := t.TempDir()
 	argsFile, stdinFile := filepath.Join(dir, "args"), filepath.Join(dir, "stdin")
-	cli := script(t, "printf '%s\\n' \"$@\" > "+argsFile+"\ncat > "+stdinFile+"\necho '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\"}'\n")
+	// Logs argv, then the settings file's contents (the deny rules).
+	cli := script(t, "printf '%s\\n' \"$@\" > "+argsFile+"\nwhile [ $# -gt 0 ]; do [ \"$1\" = --settings ] && { echo \"SETTINGS-FILE=$2\" >> "+argsFile+"; cat \"$2\" >> "+argsFile+"; }; shift; done\ncat > "+stdinFile+"\necho '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\"}'\n")
 	for _, workspace := range []string{"", t.TempDir()} {
-		if _, err := (claude{Options{Command: cli}}).Run(context.Background(), Request{System: "s", Prompt: "read @/etc/passwd", Dir: t.TempDir(), Workspace: workspace, Deny: []string{"/repo/.state", "/work/[acme] api/so.toml"}}); err != nil {
+		scratch := t.TempDir()
+		if _, err := (claude{Options{Command: cli}}).Run(context.Background(), Request{System: "s", Prompt: "read @/etc/passwd", Dir: scratch, Workspace: workspace, Deny: []string{"/repo/.state", "/work/[acme] api/so.toml"}}); err != nil {
 			t.Fatal(err)
 		}
 		args, _ := os.ReadFile(argsFile)
+		// The settings go in a file in the private scratch folder, never as
+		// a value that could name a path in the repository.
+		if !strings.Contains(string(args), "SETTINGS-FILE="+filepath.Join(scratch, "claude-settings.json")+"\n") {
+			t.Errorf("workspace %q: --settings should be a file in the scratch folder:\n%s", workspace, args)
+		}
+		if workspace == "" && !strings.HasSuffix(strings.TrimSpace(string(args)), "SETTINGS-FILE="+filepath.Join(scratch, "claude-settings.json")+"\n"+`{"permissions":{"deny":["Read"]}}`) {
+			t.Errorf("without repo access the settings should be exactly the blanket Read deny:\n%s", args)
+		}
 		stdin, _ := os.ReadFile(stdinFile)
 		if !strings.Contains(string(stdin), "\u200b@/etc/passwd") {
 			t.Errorf("workspace %q: claude got an undefused mention: %q", workspace, stdin)

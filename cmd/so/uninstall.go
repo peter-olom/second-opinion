@@ -42,7 +42,7 @@ func cmdUninstall(ctx context.Context, args []string) int {
 		"Your config file (profiles and mode overrides) is kept unless you pass --all.")
 	all := flags.Bool("all", false, "also remove the config file in use (--config or $SECOND_OPINION_CONFIG)")
 	yes := flags.BoolP("yes", "y", false, "do not ask for confirmation")
-	if code, ok := parse(flags, args); !ok {
+	if code, ok := parseAtMost(flags, args, 0); !ok {
 		return code
 	}
 	if insidePanelist() {

@@ -456,6 +456,11 @@ func TestUsageErrorsExit2(t *testing.T) {
 		{"doctor", "--config", fakePiConfig(t), "--ping", "--canary"},
 		{"doctor", "--config", fakePiConfig(t), "-p", "x", "-w", "pi:x"},
 		{"skill", "install", "vim"},
+		{"init", "--config", filepath.Join(t.TempDir(), "c.toml"), "/tmp/intended.toml"},
+		{"modes", "--config", fakePiConfig(t), "general", "extra"},
+		{"profiles", "--config", fakePiConfig(t), "extra"},
+		{"doctor", "--config", fakePiConfig(t), "extra"},
+		{"uninstall", "--config", fakePiConfig(t), "--yes", "/tmp/intended.toml"},
 	} {
 		captureStderr(t, func() {
 			captureStdout(t, func() {

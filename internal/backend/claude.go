@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -32,10 +33,11 @@ func (c claude) Run(ctx context.Context, req Request) (string, error) {
 		"--disable-slash-commands",
 		"--system-prompt", req.System + mentionNote,
 	}
+	var settings string
 	if req.Workspace == "" {
 		// Defense in depth for the mention expansion below: with no tools,
 		// nothing may be read at all.
-		args = append(args, "--settings", `{"permissions":{"deny":["Read"]}}`)
+		settings = `{"permissions":{"deny":["Read"]}}`
 	} else {
 		// Agent harnesses keep session state in the repository; it isn't
 		// part of the code under review. (Read rules cover Grep and Glob
@@ -55,8 +57,17 @@ func (c claude) Run(ctx context.Context, req Request) (string, error) {
 			deny = append(deny, "Read(/"+p+")", "Read(/"+p+"/**)")
 		}
 		rules, _ := json.Marshal(map[string]any{"permissions": map[string]any{"deny": deny}})
-		args = append(args, "--settings", string(rules))
+		settings = string(rules)
 	}
+	// --settings takes a file or a JSON string. Given as a file in the
+	// private scratch folder, its value can't be read as a path into the
+	// repository (where a hostile one could plant nested folders spelling
+	// the JSON), the way pi reads its prompt arguments.
+	settingsFile := filepath.Join(req.Dir, "claude-settings.json")
+	if err := os.WriteFile(settingsFile, []byte(settings), 0o600); err != nil {
+		return "", err
+	}
+	args = append(args, "--settings", settingsFile)
 	if req.Model != "" {
 		args = append(args, "--model", req.Model)
 	}

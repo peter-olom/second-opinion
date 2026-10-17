@@ -1051,7 +1051,7 @@ func TestDenyListReachesEveryClaudeSeat(t *testing.T) {
 	logDir := filepath.Join(fakeDir, "argv")
 	os.MkdirAll(logDir, 0o755)
 	fake := filepath.Join(fakeDir, "claude")
-	os.WriteFile(fake, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$(mktemp "+logDir+"/call.XXXXXX)\"\ncat >/dev/null\necho '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\"}'\n"), 0o755)
+	os.WriteFile(fake, []byte("#!/bin/sh\nlog=$(mktemp "+logDir+"/call.XXXXXX)\nprintf '%s\\n' \"$@\" > \"$log\"\nwhile [ $# -gt 0 ]; do [ \"$1\" = --settings ] && cat \"$2\" >> \"$log\"; shift; done\ncat >/dev/null\necho '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\"}'\n"), 0o755)
 	cfg := filepath.Join(repo, "so.toml")
 	os.WriteFile(cfg, []byte("[backends.claude]\ncommand = \""+fake+"\"\n[backends.codex]\ncommand = \"/nonexistent/c\"\n[backends.pi]\ncommand = \"/nonexistent/p\"\n"), 0o600)
 	t.Chdir(repo)
@@ -1128,6 +1128,11 @@ func TestBackendHomesHoweverGiven(t *testing.T) {
 	t.Setenv("PI_CODING_AGENT_DIR", "~/pi-auth") // the CLI expands ~
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	cfg := &config.Config{Backends: map[string]config.Backend{}}
+	resolveHomes(cfg)
+	// The CLI gets the same absolute path so protects.
+	if v := cfg.Backends["codex"].Env["CODEX_HOME"]; v != filepath.Join(gitctx.Physical(work), ".codex-auth") {
+		t.Errorf("codex would get CODEX_HOME=%q", v)
+	}
 	got := map[string]string{}
 	for _, ex := range privatePaths(cfg) {
 		got[ex.Reason] = ex.Path
@@ -1189,4 +1194,52 @@ func TestOtherBackendsCountsFallbacks(t *testing.T) {
 	if got := otherBackends(p); got != "pi" {
 		t.Errorf("otherBackends = %q, want pi (from a fallback)", got)
 	}
+}
+
+func TestDefaultBackendHomesAreProtected(t *testing.T) {
+	unsetEnv(t, backend.EnvGuard)
+	home := t.TempDir()
+	if r, err := filepath.EvalSymlinks(home); err == nil {
+		home = r
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	// A dotfiles repository of ~/.codex, with credentials in it.
+	repo := filepath.Join(home, ".codex")
+	os.MkdirAll(repo, 0o700)
+	for _, args := range [][]string{{"init", "-q"}, {"commit", "-q", "--allow-empty", "-m", "i"}} {
+		cmd := exec.Command("git", append([]string{"-C", repo, "-c", "user.email=a@b", "-c", "user.name=a"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	os.WriteFile(filepath.Join(repo, "auth.json"), []byte(`{"token":"AUTH-SENTINEL"}`), 0o600)
+	fakeDir := t.TempDir()
+	fake := filepath.Join(fakeDir, "pi")
+	got := filepath.Join(fakeDir, "got")
+	os.WriteFile(fake, []byte("#!/bin/sh\ncat > "+got+"\necho ok\n"), 0o755)
+	cfg := filepath.Join(fakeDir, "config.toml")
+	os.WriteFile(cfg, []byte(stubOtherBackends+"[backends.pi]\ncommand = \""+fake+"\"\n"), 0o600)
+	t.Chdir(repo)
+	captureStderr(t, func() {
+		captureStdout(t, func() {
+			run(context.Background(), []string{"ask", "--config", cfg, "--diff", "--no-repo", "-w", "pi:x", "q"})
+		})
+	})
+	prompt, _ := os.ReadFile(got)
+	if strings.Contains(string(prompt), "AUTH-SENTINEL") {
+		t.Errorf("~/.codex's credentials went out with the diff:\n%s", prompt)
+	}
+	if !strings.Contains(string(prompt), "(codex's home, with its credentials; not attached)") {
+		t.Errorf("the omission should be listed:\n%s", prompt)
+	}
+}
+
+func TestDoctorProfileRefusedInsidePanelist(t *testing.T) {
+	t.Setenv(backend.EnvGuard, "1")
+	captureStderr(t, func() {
+		if code := run(context.Background(), []string{"doctor", "--config", fakePiConfig(t), "-p", "x"}); code != 3 {
+			t.Errorf("exit code = %d, want 3 inside a panelist", code)
+		}
+	})
 }

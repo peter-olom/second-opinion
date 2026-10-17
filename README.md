@@ -298,10 +298,13 @@ under a folder named `[x] (y) {z}`, and asks for it. At most four checks run at 
 run, which is evidence rather than proof. In testing, a Codex panelist with this lockdown didn't read the file in
 10 of 10 runs, while the same check caught an unlocked Codex every time.
 
-If your run history (`$XDG_STATE_HOME`), `so`'s config, or a backend's home moved with
-`CODEX_HOME`, `CLAUDE_CONFIG_DIR` or `PI_CODING_AGENT_DIR` (sign-in credentials) is inside a
-repository, `--diff` never attaches it, even deleted, and claude panelists with repo access are
-denied it. `so` warns when the panel's codex or pi seats could still read it.
+If your run history (`$XDG_STATE_HOME`), `so`'s config, or a backend's home (`~/.claude`,
+`~/.claude.json`, `~/.codex`, `~/.pi/agent`, or wherever `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or
+`PI_CODING_AGENT_DIR` moves it; sign-in credentials and transcripts) is inside a repository,
+`--diff` never attaches it, even deleted, and claude panelists with repo access are denied it. `so`
+warns when the panel's codex or pi seats could still read it. A relative or `~` home is resolved
+once and passed to the CLI as that absolute path, so what `so` protects is what the CLI uses.
+claude's deny rules are written to a private file in the scratch folder and passed by path.
 
 `--repo` refuses to share a repository's `.git` folder or a bare repository, run from inside one.
 

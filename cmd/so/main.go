@@ -158,6 +158,20 @@ func parse(fs *pflag.FlagSet, args []string) (int, bool) {
 	return 0, true
 }
 
+// parseAtMost is parse for a command that takes at most max positional
+// arguments: more is a usage error, rather than ignored (so init PATH would
+// otherwise write the default config, not PATH).
+func parseAtMost(fs *pflag.FlagSet, args []string, max int) (int, bool) {
+	if code, ok := parse(fs, args); !ok {
+		return code, false
+	}
+	if fs.NArg() > max {
+		fmt.Fprintf(os.Stderr, "so %s: unexpected argument %q (see so %s --help)\n", fs.Name(), fs.Arg(max), fs.Name())
+		return 2, false
+	}
+	return 0, true
+}
+
 func newFlagSet(name, synopsis string) (*pflag.FlagSet, *string) {
 	fs := pflag.NewFlagSet(name, pflag.ContinueOnError)
 	fs.SortFlags = false
@@ -224,6 +238,7 @@ func cmdAsk(ctx context.Context, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
+	resolveHomes(cfg)
 	// Expired runs go now, so even a run that stops early prunes them.
 	history.Prune(history.Dir(), time.Now().Add(-cfg.Retention()))
 	p, err := resolvePanel(cfg, *profile, *mode, *with, *chair, *noChair)
@@ -494,16 +509,50 @@ func privatePaths(cfg *config.Config) []gitctx.Exclude {
 		{Path: history.StateDir(), Reason: "so's run history"},
 		{Path: cfg.Path, Reason: "so's config"},
 	}
-	for _, h := range []struct{ backend, env string }{{"claude", "CLAUDE_CONFIG_DIR"}, {"codex", "CODEX_HOME"}, {"pi", "PI_CODING_AGENT_DIR"}} {
-		v, ok := cfg.Backends[h.backend].Env[h.env]
-		if !ok {
-			v = os.Getenv(h.env)
-		}
-		if v = homePath(v); v != "" {
+	// The default homes always (a dotfiles repo of ~/.codex, say), and a
+	// moved one too.
+	if home, err := os.UserHomeDir(); err == nil && filepath.IsAbs(home) {
+		paths = append(paths,
+			gitctx.Exclude{Path: filepath.Join(home, ".claude"), Reason: "claude's home, with its credentials and transcripts"},
+			gitctx.Exclude{Path: filepath.Join(home, ".claude.json"), Reason: "claude's account state"},
+			gitctx.Exclude{Path: filepath.Join(home, ".codex"), Reason: "codex's home, with its credentials"},
+			gitctx.Exclude{Path: filepath.Join(home, ".pi", "agent"), Reason: "pi's home, with its credentials"})
+	}
+	for _, h := range homeVars {
+		if v := cfg.Backends[h.backend].Env[h.env]; v != "" {
 			paths = append(paths, gitctx.Exclude{Path: v, Reason: h.backend + "'s home (" + h.env + "), with its credentials"})
 		}
 	}
 	return paths
+}
+
+// homeVars move each backend's home (and its credentials).
+var homeVars = []struct{ backend, env string }{{"claude", "CLAUDE_CONFIG_DIR"}, {"codex", "CODEX_HOME"}, {"pi", "PI_CODING_AGENT_DIR"}}
+
+// resolveHomes fixes each backend's home, from its config env or the
+// environment, as one absolute path in its config env, which the CLI then
+// gets. Relative or "~", the value would otherwise mean one folder to so
+// (resolved from where so started) and another to the CLI (run in the
+// repository or a scratch folder), so so would protect the wrong one.
+func resolveHomes(cfg *config.Config) {
+	for _, h := range homeVars {
+		bc := cfg.Backends[h.backend]
+		v, ok := bc.Env[h.env]
+		if !ok {
+			v = os.Getenv(h.env)
+		}
+		if v = homePath(v); v == "" {
+			continue
+		}
+		if bc.Env == nil {
+			bc.Env = map[string]string{}
+		}
+		bc.Env[h.env] = v
+		if cfg.Backends == nil {
+			cfg.Backends = map[string]config.Backend{}
+		}
+		cfg.Backends[h.backend] = bc
+	}
 }
 
 // homePath resolves a backend-home value the way the CLI would: "~/" is
@@ -757,7 +806,7 @@ func errNoProfiles(cfg *config.Config) error {
 
 func cmdProfiles(args []string) int {
 	fs, cfgPath := newFlagSet("profiles", "so profiles")
-	if code, ok := parse(fs, args); !ok {
+	if code, ok := parseAtMost(fs, args, 0); !ok {
 		return code
 	}
 	cfg, err := config.Load(*cfgPath)
@@ -804,7 +853,7 @@ func cmdProfiles(args []string) int {
 func cmdModes(args []string) int {
 	fs, cfgPath := newFlagSet("modes", "so modes [name] [--toml]")
 	asTOML := fs.Bool("toml", false, "print the mode as a config section to copy into your config and edit")
-	if code, ok := parse(fs, args); !ok {
+	if code, ok := parseAtMost(fs, args, 1); !ok {
 		return code
 	}
 	cfg, err := config.Load(*cfgPath)
@@ -858,10 +907,10 @@ func cmdDoctor(ctx context.Context, args []string) int {
 	canary := fs.Bool("canary", false, "check each model is isolated: plant a file outside its scratch folder and see whether it can read it")
 	profile := fs.StringP("profile", "p", "", "ping only this profile")
 	with := fs.StringArrayP("with", "w", nil, "ping this backend:model@effort instead (repeatable; implies --ping)")
-	if code, ok := parse(fs, args); !ok {
+	if code, ok := parseAtMost(fs, args, 0); !ok {
 		return code
 	}
-	if (*ping || *canary || len(*with) > 0) && insidePanelist() {
+	if (*ping || *canary || len(*with) > 0 || *profile != "") && insidePanelist() {
 		fmt.Fprintln(os.Stderr, "so: refusing to call models from inside a second-opinion panelist.")
 		return 3
 	}
@@ -878,6 +927,7 @@ func cmdDoctor(ctx context.Context, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
+	resolveHomes(cfg)
 	if cfg.Path == "" {
 		fmt.Println("config: none (HOME is unset or not absolute; built-in defaults only)")
 	} else if cfg.Exists {
@@ -1118,10 +1168,10 @@ func ignoredRouting(name string, backendEnv map[string]string) []string {
 // piAgentDir is where pi keeps its config: PI_CODING_AGENT_DIR (from the
 // backend's config env or the environment), or ~/.pi/agent.
 func piAgentDir(env map[string]string) string {
-	if d, ok := env["PI_CODING_AGENT_DIR"]; ok && d != "" {
+	if d := homePath(env["PI_CODING_AGENT_DIR"]); d != "" {
 		return d
 	}
-	if d := os.Getenv("PI_CODING_AGENT_DIR"); d != "" {
+	if d := homePath(os.Getenv("PI_CODING_AGENT_DIR")); d != "" {
 		return d
 	}
 	home, _ := os.UserHomeDir()
@@ -1386,7 +1436,7 @@ var skillDirs = []skillDir{
 // are listed so uninstall also finds a skill installed before a move.
 func (s skillDir) paths(home string) []string {
 	def := filepath.Join(home, s.dir)
-	if v := os.Getenv(s.env); filepath.IsAbs(v) {
+	if v := homePath(os.Getenv(s.env)); v != "" {
 		if moved := filepath.Join(v, "skills"); moved != def {
 			return []string{moved, def}
 		}
@@ -1548,7 +1598,7 @@ func cmdRunsShow(args []string) int {
 func cmdInit(args []string) int {
 	fs, cfgPath := newFlagSet("init", "so init [--force]")
 	force := fs.Bool("force", false, "overwrite an existing config")
-	if code, ok := parse(fs, args); !ok {
+	if code, ok := parseAtMost(fs, args, 0); !ok {
 		return code
 	}
 	if *cfgPath == "" {
