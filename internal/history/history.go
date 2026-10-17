@@ -209,6 +209,10 @@ func List(dir string, n int) ([]Record, error) {
 
 // Load returns the run matching ref: "last", a full ID, or any unique part of one.
 func Load(dir, ref string) (Record, error) {
+	if ref == "" {
+		// Every ID contains "", so it would match the only run there is.
+		return Record{}, errors.New("no run ID given")
+	}
 	ids, err := ids(dir)
 	if err != nil {
 		return Record{}, err

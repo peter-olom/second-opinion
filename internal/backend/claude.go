@@ -33,6 +33,16 @@ func (c claude) Run(ctx context.Context, req Request) (string, error) {
 		// Defense in depth for the mention expansion below: with no tools,
 		// nothing may be read at all.
 		args = append(args, "--settings", `{"permissions":{"deny":["Read"]}}`)
+	} else {
+		// Agent harnesses keep session state in the repository; it isn't
+		// part of the code under review. (Read rules cover Grep and Glob
+		// too; verified with Claude Code 2.1.)
+		var deny []string
+		for _, p := range HarnessState {
+			deny = append(deny, "Read(./"+p+")", "Read(./"+p+"/**)")
+		}
+		rules, _ := json.Marshal(map[string]any{"permissions": map[string]any{"deny": deny}})
+		args = append(args, "--settings", string(rules))
 	}
 	if req.Model != "" {
 		args = append(args, "--model", req.Model)

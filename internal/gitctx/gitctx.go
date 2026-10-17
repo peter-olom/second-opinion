@@ -42,19 +42,60 @@ var (
 func Root(ctx context.Context, dir string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	out, _, err := git(ctx, dir, 64<<10, "rev-parse", "--show-toplevel")
+	out, _, err := git(ctx, dir, 64<<10, "rev-parse", "--show-toplevel", "--absolute-git-dir")
 	if err != nil {
 		return "", err
 	}
-	// Only git's line ending: a path may legitimately end in whitespace.
-	root := strings.TrimSuffix(out, "\n") // a CR could be part of the path
-	// core.worktree (in a copied .git/config) can name a work tree that
-	// doesn't contain dir, so repo access or --diff would cover some other
-	// folder entirely.
-	if !contains(root, dir) {
-		return "", fmt.Errorf("git reports %s as the work tree, which doesn't contain %s (core.worktree?); not using it", root, dir)
+	// Only git's line endings: a path may legitimately end in whitespace
+	// (or a CR).
+	root, gitDir, ok := strings.Cut(strings.TrimSuffix(out, "\n"), "\n")
+	if !ok {
+		return "", fmt.Errorf("git rev-parse: unexpected output %q", out)
+	}
+	// core.worktree (in a copied .git/config) can name some other folder as
+	// the work tree, a parent one included, so repo access or --diff would
+	// cover other projects. A real work tree holds the .git that leads to
+	// this repository: the folder itself, or a file pointing to it (linked
+	// worktrees, submodules).
+	if !contains(root, dir) || !ownsGitDir(root, gitDir) {
+		return "", fmt.Errorf("git reports %s as the work tree, but it isn't where this repository's .git is (core.worktree?); %w", root, ErrForeignWorkTree)
 	}
 	return root, nil
+}
+
+// ErrForeignWorkTree marks a work tree that doesn't hold its repository's .git.
+var ErrForeignWorkTree = errors.New("not using it")
+
+// ownsGitDir reports whether root/.git is gitDir, or a "gitdir:" file that
+// points to it.
+func ownsGitDir(root, gitDir string) bool {
+	want, err := os.Stat(gitDir)
+	if err != nil {
+		return false
+	}
+	dotGit := filepath.Join(root, ".git")
+	fi, err := os.Lstat(dotGit)
+	switch {
+	case err != nil:
+		return false
+	case fi.IsDir():
+		return os.SameFile(fi, want)
+	case !fi.Mode().IsRegular():
+		return false
+	}
+	data, err := os.ReadFile(dotGit)
+	if err != nil {
+		return false
+	}
+	target, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir: ")
+	if !ok {
+		return false
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(root, target)
+	}
+	got, err := os.Stat(target)
+	return err == nil && os.SameFile(got, want)
 }
 
 // contains reports whether dir is root or inside it, by their real paths.
@@ -92,6 +133,9 @@ func Diff(ctx context.Context, dir, base, nonce string) (Context, error) {
 	if err != nil {
 		if ctx.Err() != nil {
 			return Context{}, ctx.Err()
+		}
+		if errors.Is(err, ErrForeignWorkTree) {
+			return Context{}, fmt.Errorf("--diff: %w", err)
 		}
 		return Context{}, errors.New("--diff needs to run inside a git repository")
 	}

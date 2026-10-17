@@ -645,6 +645,15 @@ func TestDiffRefusesDotFolderReposUnlessConfirmed(t *testing.T) {
 	if !strings.Contains(stderr, "dot-folder") {
 		t.Errorf("stderr = %q, want the dot-folder refusal", stderr)
 	}
+	// --no-repo confirms it without granting read access.
+	stderr = captureStderr(t, func() {
+		captureStdout(t, func() {
+			run(context.Background(), []string{"ask", "--config", fakePiConfig(t), "--diff", "--no-repo", "-w", "pi:x", "q"})
+		})
+	})
+	if strings.Contains(stderr, "dot-folder") {
+		t.Errorf("--diff --no-repo should be accepted as confirmation: %q", stderr)
+	}
 }
 
 func TestCanaryChecksMentions(t *testing.T) {
@@ -655,8 +664,10 @@ func TestCanaryChecksMentions(t *testing.T) {
 	// A claude that, like Claude Code, expands an @path mention at the start
 	// of the text or after whitespace by reading the file.
 	fake := filepath.Join(dir, "claude")
+	stdinLog := filepath.Join(dir, "stdin")
 	os.WriteFile(fake, []byte(`#!/bin/sh
 prompt=$(cat)
+printf '%s\n' "$prompt" >> `+stdinLog+`
 f=$(printf '%s' "$prompt" | grep -oE '(^|[[:space:]])@/[^[:space:]]+' | head -1 | sed 's/^[[:space:]]*@//')
 content=""
 [ -n "$f" ] && [ -f "$f" ] && content=$(cat "$f")
@@ -668,10 +679,15 @@ printf '{"type":"result","subtype":"success","result":"saw %s"}\n' "$content"
 	out := captureStdout(t, func() {
 		code = run(context.Background(), []string{"doctor", "--canary", "--config", cfgPath, "-w", "claude:x"})
 	})
-	for _, check := range []string{"(tools)", "(mention)", "(mention, repo access)"} {
+	for _, check := range []string{"(tools)", "(tools, repo access)", "(mention)", "(mention, repo access)"} {
 		if !strings.Contains(out, "✓ claude:x "+check) {
 			t.Errorf("missing a passing %s check:\n%s", check, out)
 		}
+	}
+	// The mention checks really sent a mention, defused as a request is.
+	sent, _ := os.ReadFile(stdinLog)
+	if n := strings.Count(string(sent), "\u200b@/"); n != 2 {
+		t.Errorf("the canary sent %d defused mentions, want 2:\n%s", n, sent)
 	}
 	if code != 0 {
 		t.Errorf("exit %d, want 0 with mentions defused:\n%s", code, out)

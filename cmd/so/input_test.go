@@ -205,7 +205,7 @@ func TestCanaryReportsWhatModelsCanRead(t *testing.T) {
 	dir := t.TempDir()
 	// A fake pi that reads any path named in its prompt, and one that cannot.
 	reader := filepath.Join(dir, "reader")
-	os.WriteFile(reader, []byte("#!/bin/sh\nprompt=$(cat)\nf=$(echo \"$prompt\" | grep -o '/[^ ]*canary.txt')\ncat \"$f\"\n"), 0o755)
+	os.WriteFile(reader, []byte("#!/bin/sh\nprompt=$(cat)\nf=$(echo \"$prompt\" | grep -oE '/[^ ]*(canary|link)\\.txt' | head -1)\ncat \"$f\"\n"), 0o755)
 	blind := filepath.Join(dir, "blind")
 	os.WriteFile(blind, []byte("#!/bin/sh\ncat >/dev/null\necho NO-TOOLS\n"), 0o755)
 
@@ -220,8 +220,12 @@ func TestCanaryReportsWhatModelsCanRead(t *testing.T) {
 		out := captureStdout(t, func() {
 			code = run(context.Background(), []string{"doctor", "--canary", "--config", cfgPath, "-w", "pi:fake"})
 		})
-		if code != tc.code || !strings.Contains(out, tc.mark+" pi:fake") {
-			t.Errorf("%s: exit %d, output:\n%s\nwant exit %d and %s", name, code, out, tc.code, tc.mark)
+		if code != tc.code || !strings.Contains(out, tc.mark+" pi:fake (tools):") {
+			t.Errorf("%s: exit %d, output:\n%s\nwant exit %d and %s for the tools check", name, code, out, tc.code, tc.mark)
+		}
+		// pi may read any file with repo access: reported, not failed.
+		if name == "reads" && !strings.Contains(out, "- pi:fake (tools, repo access): read the file, as pi can") {
+			t.Errorf("reads: the repo-access read should be reported as expected for pi:\n%s", out)
 		}
 	}
 }
@@ -443,6 +447,8 @@ func TestUsageErrorsExit2(t *testing.T) {
 	}
 	for _, argv := range [][]string{
 		{"doctor", "--config", fakePiConfig(t), "-w", "pi:x@hgih"},
+		{"doctor", "--config", fakePiConfig(t), "--ping", "--canary"},
+		{"doctor", "--config", fakePiConfig(t), "-p", "x", "-w", "pi:x"},
 		{"skill", "install", "vim"},
 	} {
 		captureStderr(t, func() {

@@ -965,6 +965,9 @@ func TestSubmoduleFiltersNeverRun(t *testing.T) {
 	// Positive control: plain git diff does run it, so the test is real.
 	run(t, dir, "diff", "HEAD")
 	if _, err := os.Stat(marker); err != nil {
+		if os.Getenv("CI") != "" {
+			t.Fatal("control: plain git didn't run the submodule's filter, so this test checks nothing")
+		}
 		t.Skip("this git does not run submodule filters here; nothing to check")
 	}
 }
@@ -985,19 +988,37 @@ func gitRunsDriver(t *testing.T, dir, marker string, args ...string) {
 }
 
 func TestRootRefusesAWorkTreeElsewhere(t *testing.T) {
+	// A sibling repository with changes, and a parent folder that is a
+	// repository of its own: neither may stand in for the planted one.
+	parent := newRepo(t)
+	write(t, parent, "a.go", "package a // PARENT-CHANGE\n")
 	other := newRepo(t)
-	dir := t.TempDir()
-	run(t, dir, "init", "-q")
-	run(t, dir, "config", "core.worktree", other)
-	if root, err := Root(context.Background(), dir); err == nil {
-		t.Errorf("Root = %q; a core.worktree outside the folder should be refused", root)
+	write(t, other, "a.go", "package a // SIBLING-CHANGE\n")
+	for name, target := range map[string]string{"sibling": other, "parent": parent} {
+		dir := filepath.Join(parent, "planted-"+name)
+		os.MkdirAll(dir, 0o755)
+		run(t, dir, "init", "-q")
+		run(t, dir, "config", "core.worktree", target)
+		if root, err := Root(context.Background(), dir); err == nil || !strings.Contains(err.Error(), "core.worktree") {
+			t.Errorf("%s: Root = %q, %v; want the core.worktree refusal", name, root, err)
+		}
+		if _, err := Diff(context.Background(), dir, "HEAD", ""); err == nil || !strings.Contains(err.Error(), "core.worktree") {
+			t.Errorf("%s: Diff err = %v; want the core.worktree refusal", name, err)
+		}
 	}
-	if _, err := Diff(context.Background(), dir, "HEAD", ""); err == nil {
-		t.Error("Diff should refuse it too")
-	}
+	// Normal layouts still work: a subfolder, a linked worktree, a submodule.
 	sub := filepath.Join(other, "pkg")
 	os.MkdirAll(sub, 0o755)
 	if _, err := Root(context.Background(), sub); err != nil {
 		t.Errorf("a subfolder of a normal repository: %v", err)
+	}
+	wt := filepath.Join(t.TempDir(), "wt")
+	run(t, other, "worktree", "add", "-q", wt)
+	if root, err := Root(context.Background(), wt); err != nil || !contains(root, wt) {
+		t.Errorf("a linked worktree: %q, %v", root, err)
+	}
+	run(t, parent, "-c", "protocol.file.allow=always", "submodule", "add", "-q", other, "mod")
+	if _, err := Root(context.Background(), filepath.Join(parent, "mod")); err != nil {
+		t.Errorf("a submodule: %v", err)
 	}
 }

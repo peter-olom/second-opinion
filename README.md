@@ -174,7 +174,9 @@ The caller always writes the prompt. There are two ways to give the panel more c
   with plain `--diff`, HEAD's too); checking committed attributes needs git 2.40 or later. If there are too many changed
   files to check this, `--diff` stops rather than send a partial check. Untracked files are attached
   unless git ignores them, so add anything other tools leave in your working tree to `.gitignore` or
-  your global excludes. Limits: 1 MB of diff, 256 KB per file, 1.5 MB of files in total. This only
+  your global excludes (that keeps them out of `--diff` only; repo access can still read them). A
+  repository inside a dot-folder in your home directory (`~/.config/…`) is refused unless you add
+  `--no-repo` (the diff only) or `--repo`. Limits: 1 MB of diff, 256 KB per file, 1.5 MB of files in total. This only
   governs what is attached: with repository access (the default in `review`, `debug` and `audit`),
   panelists can still read those decrypted working copies themselves. Add `--no-repo` to prevent that.
 - **`-f <file>` and stdin.** `-f` attaches a regular file of up to 1 MB. Stdin (up to 2 MB) is read
@@ -258,6 +260,10 @@ that CLI may bill the API account instead of your subscription; `so doctor` warn
 backend's config `env` can clear it (`env = { ANTHROPIC_API_KEY = "" }`). pi has no such switch: it bills whatever provider and key its own settings
 and environment select.
 
+Agent harnesses sometimes keep session state in the repository (`.recallstack/`, `.specstory/`,
+aider's history files). With repo access, claude panelists are denied those paths (Read rules,
+which cover Grep and Glob too), and `so` warns that codex and pi panelists can still read them.
+
 Claude Code reads any file named in an `@path` mention in its prompt, in code blocks too, whatever
 its tools allow, and even outside the repository. In testing, an attached file mentioning
 `@/some/other/file` made claude send that file's contents. So `so` puts an invisible zero-width
@@ -274,9 +280,11 @@ These flags assume no overriding `args` in a `[backends.*]` section of your conf
 appended after `so`'s own flags, so they can undo the lockdown.
 
 `so doctor --canary` tests this on your machine. It plants a file outside each model's folder and
-runs three checks per model, each configured exactly as a panelist: one asks it to read the file
-with any tool it has (without repo access), and two name the file in an `@` mention, the way
-claude would expand it, without and with repo access. A ✓ means it did not read the file on that
+runs four checks per model, each configured exactly as a panelist: two ask it to read the file with
+any tool it has, without repo access and with repo access through a symlink in the workspace (only
+claude must refuse that one; codex and pi can read any file with repo access, so for them it is
+reported, not failed), and two name the file in an `@` mention, the way claude would expand it,
+without and with repo access. A ✓ means it did not read the file on that
 run, which is evidence rather than proof. In testing, a Codex panelist with this lockdown didn't read the file in
 10 of 10 runs, while the same check caught an unlocked Codex every time.
 

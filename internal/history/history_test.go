@@ -287,3 +287,11 @@ func TestSaveWorksWithoutHardLinks(t *testing.T) {
 		t.Errorf("Load = %v, %v; want the record saved by rename", got.ID, err)
 	}
 }
+
+func TestEmptyRefMatchesNothing(t *testing.T) {
+	dir := t.TempDir()
+	Save(dir, Record{ID: NewID(time.Now()), Time: time.Now()}, time.Hour)
+	if _, err := Load(dir, ""); err == nil {
+		t.Error("an empty run ID matched a run")
+	}
+}

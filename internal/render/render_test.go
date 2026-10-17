@@ -281,3 +281,24 @@ func TestClippedChairInputIsShown(t *testing.T) {
 		t.Errorf("the clipped-input note is missing:\n%s", b.String())
 	}
 }
+
+func TestHeaderValuesCannotOpenComments(t *testing.T) {
+	res := anonymousResult()
+	res.Attached = "diff vs HEAD; 1 file attached: <!--x"
+	res.Workspace = "/repo/<!--y"
+	res.Opinions[0].Label = "Panelist <!--A"
+	var b strings.Builder
+	Markdown(&b, res)
+	if strings.Contains(b.String(), "<!--") {
+		t.Errorf("a raw comment opening reached the output:\n%s", b.String())
+	}
+	if Line("a\n<!--b") != "a &lt;!--b" {
+		t.Errorf("Line = %q", Line("a\n<!--b"))
+	}
+}
+
+func TestCleanTextDropsBidiAndSeparators(t *testing.T) {
+	if got := CleanText("a\u202eb\u2066c\u2028d\u200fe\u200bf"); got != "abcde\u200bf" {
+		t.Errorf("CleanText = %q", got)
+	}
+}

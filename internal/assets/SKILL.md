@@ -18,7 +18,10 @@ anything else.
 
 Panelists are **not given this conversation**. They see your prompt, anything you attach, and, if
 the panel has repository access, the code in the repository. With repository access, codex and pi
-panelists can also read files elsewhere on disk, which may include saved agent conversations.
+panelists can also read files elsewhere on disk, which may include saved agent conversations, and
+any harness state kept in the repository (claude panelists are denied `.recallstack/` and the like;
+codex and pi aren't, and `so` warns). Git's ignore rules keep files out of `--diff`, not out of repo
+access.
 
 - **Your prompt.** Always state the goal, the specific question, the constraints, what you have
   tried, and your current view, and ask them to challenge it rather than confirm it.

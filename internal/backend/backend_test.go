@@ -489,6 +489,10 @@ func TestClaudeGetsDefusedPromptAndReadDeny(t *testing.T) {
 		if deny != (workspace == "") {
 			t.Errorf("workspace %q: Read deny = %v, want it only without repo access", workspace, deny)
 		}
+		harness := strings.Contains(string(args), `"Read(./.recallstack/**)"`)
+		if harness != (workspace != "") {
+			t.Errorf("workspace %q: harness-state deny = %v, want it with repo access", workspace, harness)
+		}
 	}
 }
 

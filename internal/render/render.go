@@ -67,9 +67,13 @@ func Markdown(w io.Writer, r panel.Result) error {
 
 	// Everything printed is cleaned, not only the answers: names and paths
 	// in the header come from the repository too.
-	_, err := io.WriteString(w, CleanText(b.String()))
+	_, err := io.WriteString(w, escapeComments(CleanText(b.String())))
 	return err
 }
+
+// Line makes untrusted text safe for one line of so's own output: no
+// control characters, no line breaks, no HTML comment opening.
+func Line(s string) string { return escapeComments(oneLine(s)) }
 
 // oneLine keeps a header value on its line.
 func oneLine(s string) string {
@@ -266,6 +270,13 @@ func CleanText(s string) string {
 			return r
 		}
 		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			return -1
+		}
+		// Bidi controls can reorder how text reads, and line or paragraph
+		// separators break lines in some viewers. The zero-width space is
+		// kept: it is ordinary in text, and so's own marker is removed
+		// before rendering.
+		if r == 0x2028 || r == 0x2029 || (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) || r == 0x200e || r == 0x200f || r == 0x061c {
 			return -1
 		}
 		return r
