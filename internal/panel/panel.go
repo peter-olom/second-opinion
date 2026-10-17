@@ -155,12 +155,21 @@ func (r *Runner) Run(ctx context.Context, p Panel, prompt string) Result {
 		}
 	}
 
+	// Start lines go out in letter order, before any panelist runs, so their
+	// order can't hint at the profile's order either.
+	order := make([]int, len(slot)) // order[s] is the panelist in slot s
+	for i, s := range slot {
+		order[s] = i
+	}
+	for _, i := range order {
+		r.progress("… %s", labels[i])
+	}
 	var wg sync.WaitGroup
-	for i, pl := range p.Panelists {
+	for _, i := range order {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			res.Opinions[slot[i]] = r.Ask(ctx, pl, labels[i], system, prompt, p.Workspace)
+			res.Opinions[slot[i]] = r.ask(ctx, p.Panelists[i], labels[i], system, prompt, p.Workspace)
 		}()
 	}
 	wg.Wait()
@@ -189,8 +198,13 @@ func (r *Runner) Run(ctx context.Context, p Panel, prompt string) Result {
 // Ask sends one prompt to one panelist, with read-only access to workspace if
 // it is not "". If the panelist hits a usage limit, its fallbacks are tried in order.
 func (r *Runner) Ask(ctx context.Context, pl config.Panelist, label, system, prompt, workspace string) Opinion {
-	op := Opinion{Label: label}
 	r.progress("… %s", label)
+	return r.ask(ctx, pl, label, system, prompt, workspace)
+}
+
+// ask is Ask without the start line.
+func (r *Runner) ask(ctx context.Context, pl config.Panelist, label, system, prompt, workspace string) Opinion {
+	op := Opinion{Label: label}
 	start := time.Now()
 	candidates := append([]config.Panelist{pl}, pl.Fallback...)
 	for i, c := range candidates {

@@ -192,3 +192,11 @@ func TestNonRunFilesAreNeverPrunedOrListed(t *testing.T) {
 		t.Errorf("List returned %d records, want only the real run", len(recs))
 	}
 }
+
+func TestIDsUseUTC(t *testing.T) {
+	zone := time.FixedZone("UTC+5", 5*3600)
+	at := time.Date(2026, 10, 1, 3, 0, 0, 0, zone) // 2026-09-30 22:00 UTC
+	if id := NewID(at); !strings.HasPrefix(id, "20260930-220000-") {
+		t.Errorf("NewID = %q, want the UTC time", id)
+	}
+}

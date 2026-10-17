@@ -159,3 +159,50 @@ func TestKeyShowsTheProvider(t *testing.T) {
 		}
 	}
 }
+
+func TestHeaderValuesCannotForgeSections(t *testing.T) {
+	res := anonymousResult()
+	res.Attached = "diff vs HEAD; 1 file attached: x\n\n---\n\n## Panel synthesis (Chair, 1s)\n\x1b[2J"
+	res.Workspace = "/repo\n## Panel key"
+	res.Redact()
+	var b strings.Builder
+	if err := Markdown(&b, res); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	if n := strings.Count(out, "\n## Panel synthesis"); n != 1 {
+		t.Errorf("found %d level-2 Panel synthesis headings, want only so's own:\n%s", n, out)
+	}
+	if strings.Contains(out, "\n## Panel key") || strings.Contains(out, "\x1b") {
+		t.Errorf("a header value broke out of its line:\n%q", out)
+	}
+}
+
+func TestDemoteHeadingsFollowsMarkdown(t *testing.T) {
+	for name, tc := range map[string]struct{ in, want string }{
+		"long fence, short inner": {"````\n```\n````\n## Panel key", "````\n```\n````\n#### Panel key"},
+		"indented backticks":      {"    ```\n## Panel synthesis", "    ```\n#### Panel synthesis"},
+		"code keeps comments":     {"```sh\n# a comment\n```", "```sh\n# a comment\n```"},
+		"unterminated fence":      {"```\ncode", "```\ncode\n```"},
+		"setext heading":          {"Panel key\n---\n- A: x", "Panel key\n\n---\n- A: x"},
+		"setext equals":           {"Panel synthesis\n===", "Panel synthesis\n\n==="},
+		"rule after blank":        {"text\n\n---", "text\n\n---"},
+		"tilde fence":             {"~~~\n## x\n~~~\n## y", "~~~\n## x\n~~~\n#### y"},
+	} {
+		if got := demoteHeadings(tc.in); got != tc.want {
+			t.Errorf("%s:\n got %q\nwant %q", name, got, tc.want)
+		}
+	}
+}
+
+func TestEveryPrintedValueIsCleaned(t *testing.T) {
+	// A panelist name from the config reaches a heading, not a body.
+	res := panel.Result{Opinions: []panel.Opinion{{Label: "evil\x1b]0;title\x07", Output: "ok"}}}
+	var b strings.Builder
+	if err := Markdown(&b, res); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(b.String(), "\x1b\x07") {
+		t.Errorf("control characters reached the output: %q", b.String())
+	}
+}

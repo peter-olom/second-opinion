@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/peter-olom/second-opinion/internal/procgroup"
 )
@@ -209,21 +210,21 @@ func Diff(ctx context.Context, dir, base, nonce string) (Context, error) {
 	}
 	for _, p := range inDiff {
 		if filtered[p] && !isChanged[p] {
-			omitted = append(omitted, p+" (deleted; git filter, may be encrypted)")
+			omitted = append(omitted, showPath(p)+" (deleted; git filter, may be encrypted)")
 		}
 	}
 	attach := func(path, status string) {
 		if filtered[path] {
-			omitted = append(omitted, path+" (git filter; may be encrypted)")
+			omitted = append(omitted, showPath(path)+" (git filter; may be encrypted)")
 			return
 		}
 		if total >= maxFilesBytes {
-			omitted = append(omitted, path+" (attachment budget exceeded)")
+			omitted = append(omitted, showPath(path)+" (attachment budget exceeded)")
 			return
 		}
 		data, why := readAttachment(repo, path, min(maxFileBytes, maxFilesBytes-total))
 		if why != "" {
-			omitted = append(omitted, path+" ("+why+")")
+			omitted = append(omitted, showPath(path)+" ("+why+")")
 			return
 		}
 		total += len(data)
@@ -247,7 +248,10 @@ func Diff(ctx context.Context, dir, base, nonce string) (Context, error) {
 	// Name what was sent, so the caller can see it.
 	summary := fmt.Sprintf("diff vs %s", baseDesc)
 	if len(attached) > 0 {
-		names := attached[:min(len(attached), 10)]
+		var names []string
+		for _, p := range attached[:min(len(attached), 10)] {
+			names = append(names, showPath(p))
+		}
 		summary += fmt.Sprintf("; %d file%s attached: %s", len(attached), plural(len(attached)), strings.Join(names, ", "))
 		if rest := len(attached) - len(names); rest > 0 {
 			summary += fmt.Sprintf(", and %d more", rest)
@@ -600,4 +604,17 @@ func Tag(name, nonce string) string {
 		return name
 	}
 	return name + "-" + nonce
+}
+
+// showPath prints a file name as is when it is plain text, and quoted (Go
+// syntax) when it holds anything else. File names come from the repository,
+// which may be untrusted, and a name with a newline or escape sequence could
+// otherwise fake prompt structure or so's output, or rewrite the terminal.
+func showPath(p string) string {
+	for _, r := range p {
+		if r == '"' || r == '\\' || !unicode.IsGraphic(r) && r != ' ' {
+			return strconv.Quote(p)
+		}
+	}
+	return p
 }

@@ -428,6 +428,8 @@ func TestUsageErrorsExit2(t *testing.T) {
 		{"--timeout", "-1s"},
 		{"-w", "pi:x@hgih"},
 		{"-w", "pi:a", "-w", "pi:b", "--chair", "pi:c@hgih"},
+		{"-w", "pi:a", "-w", "pi:b", "--chair", "pi:c", "--no-chair"},
+		{"-q", "-v"},
 	} {
 		argv := append(append([]string{"ask", "--config", fakePiConfig(t)}, args...), "q")
 		captureStderr(t, func() {

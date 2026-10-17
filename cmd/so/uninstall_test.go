@@ -1144,3 +1144,26 @@ func unsetEnv(t *testing.T, key string) {
 	}
 	os.Unsetenv(key)
 }
+
+func TestUninstallFindsSkillUnderMovedHarnessHome(t *testing.T) {
+	f := newFixture(t)
+	codexHome := filepath.Join(t.TempDir(), "codex-home")
+	t.Setenv("CODEX_HOME", codexHome)
+	moved := filepath.Join(codexHome, "skills", "second-opinion", "SKILL.md")
+	mkdir(t, filepath.Dir(moved))
+	write(t, moved)
+	other := filepath.Join(codexHome, "skills", "other", "SKILL.md")
+	mkdir(t, filepath.Dir(other))
+	write(t, other)
+
+	code, out, stderr := f.uninstall(t, "", "--yes")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s\n%s", code, out, stderr)
+	}
+	if _, err := os.Stat(moved); !os.IsNotExist(err) {
+		t.Errorf("the skill under CODEX_HOME survived uninstall (err %v)", err)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Errorf("another skill under CODEX_HOME was removed: %v", err)
+	}
+}

@@ -198,6 +198,12 @@ func cmdAsk(ctx context.Context, args []string) int {
 	if *repo && *noRepo {
 		return usageErr(errors.New("use either --repo or --no-repo, not both"))
 	}
+	if *chair != "" && *noChair {
+		return usageErr(errors.New("use either --chair or --no-chair, not both"))
+	}
+	if *quiet && *verbose {
+		return usageErr(errors.New("use either --quiet or --verbose, not both"))
+	}
 	if err := checkSpecs(append(*with, *chair)...); err != nil {
 		return usageErr(err)
 	}
@@ -250,10 +256,19 @@ func cmdAsk(ctx context.Context, args []string) int {
 	}
 
 	start := time.Now()
+	// The ID is announced before the panel starts, so a caller running so in
+	// the background can wait for that exact run with so runs show <id>.
+	var id string
+	if cfg.Recording() {
+		id = history.NewID(start)
+		if !*quiet {
+			fmt.Fprintf(os.Stderr, "so: run %s\n", id)
+		}
+	}
 	res := runner.Run(ctx, p, prompt)
 	res.Attached = attached
 	if cfg.Recording() {
-		res.Run = history.NewID(start)
+		res.Run = id
 		if err := saveRun(cfg, p, prompt, res, start); err != nil {
 			fmt.Fprintln(os.Stderr, "so: could not record run:", err)
 			res.Run = ""
@@ -728,7 +743,7 @@ func cmdDoctor(ctx context.Context, args []string) int {
 		if o.OK() {
 			fmt.Printf("✓ %s (%s): %s\n", o.Label, o.Duration, oneLine(o.Output))
 		} else {
-			fmt.Printf("✗ %s (%s): %s\n", o.Label, o.Duration, o.Error)
+			fmt.Printf("✗ %s (%s): %s\n", o.Label, o.Duration, render.CleanText(o.Error))
 			code = 1
 		}
 	}
@@ -965,7 +980,7 @@ func runCanary(ctx context.Context, cfg *config.Config, targets []config.Panelis
 }
 
 func oneLine(s string) string {
-	s = strings.Join(strings.Fields(s), " ")
+	s = strings.Join(strings.Fields(render.CleanText(s)), " ")
 	if len(s) <= 60 {
 		return s
 	}
@@ -1142,7 +1157,7 @@ func cmdRunsShow(args []string) int {
 		return 0
 	}
 	if *showPrompt {
-		fmt.Printf("# Prompt (%s, in %s)\n\n%s\n\n", rec.Time.Format(time.DateTime), rec.Dir, rec.Prompt)
+		fmt.Printf("# Prompt (%s, in %s)\n\n%s\n\n", rec.Time.Format(time.DateTime), strings.ReplaceAll(render.CleanText(rec.Dir), "\n", " "), render.CleanText(rec.Prompt))
 	}
 	if err := render.Markdown(os.Stdout, rec.Result); err != nil {
 		return fail(err)

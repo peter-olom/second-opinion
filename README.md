@@ -134,7 +134,8 @@ Each run is saved privately to `~/.local/state/second-opinion/runs/<run-id>.json
 `$XDG_STATE_HOME`. Files are `0600` and the folder is `0700`. A record holds the prompt, the system
 prompts sent, every answer and error, timings, and which model was which panelist (as configured:
 a panelist without a `model` used its CLI's default, which `so` can't see, and the key says so). The run ID
-appears at the top of the answer; if the record can't be saved, `so` says so on stderr and the
+is printed to stderr as soon as the run starts (`so: run <id>`, unless `-q`) and appears at the top
+of the answer; if the record can't be saved, `so` says so on stderr and the
 answer has no run ID.
 
 ```bash
@@ -193,7 +194,7 @@ reach differs, and these are the tested guarantees:
 
 | backend | without repo access | with repo access |
 |---|---|---|
-| claude | No tools at all (`--tools ""`). | `Read`, `Grep`, `Glob` only. Reads outside the repository are denied. |
+| claude | No tools at all (`--tools ""`). | `Read`, `Grep`, `Glob` only. Reads outside the repository are denied (verified: Claude Code asks for a permission it never gets). |
 | codex | Every Codex feature except networking is disabled, including **connected apps** (Gmail, GitHub, Jira, …), browser and computer use, sub-agents, image generation, and web search; so are its shell tools. Codex has no switch that guarantees no tools at all, so a read-only command path may occasionally remain. | The same, but with read-only commands enabled so it can explore the repository. Those can read any file you can read, not just the repository. The repository's `AGENTS.md` is not loaded (`project_doc_max_bytes = 0`). |
 | pi | No tools (`--no-tools`) and no context files. | `read`, `grep`, `find`, `ls`, which are not confined to the repository. Still no context files (`--no-context-files`), so no `AGENTS.md` is loaded. |
 
@@ -262,7 +263,8 @@ process itself is stopped, and the backends are less tested (npm-installed CLIs 
 shims, which may mangle multi-line arguments).
 
 Each model call gets the full timeout. The chair starts after the panel finishes, and each fallback
-gets its own timeout too, so a run can take about twice the timeout or more. Panelists with repo
+gets its own timeout too, so a run takes up to about twice the timeout, and three or four times
+with fallbacks. Panelists with repo
 access can read files outside the repository: codex through its shell and pi through `read`. That
 includes your run history in `~/.local/state/second-opinion` and other tools' files, such as an
 agent harness's saved conversations.

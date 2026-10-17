@@ -93,11 +93,14 @@ when you report the result.
 - A call takes from about 10 seconds to several minutes. High-effort panels with repository
   access are the slowest, and audits slower still. Each model call gets the full `timeout`
   (15 minutes by default), and the chair runs after the panel, so give the command at least
-  twice that, and do not start it again while it is still running. If your shell tool caps how
-  long a command can run, start `so ask` in the background, or pass a `--timeout` well under half
-  that cap. A run that is killed outright is not recorded. One that is interrupted (Ctrl-C) is
-  saved with whatever had answered, and a background run is recorded as usual: `so runs show last`
-  prints its answer once it is done.
+  twice that, and do not start it again while it is still running. A fallback that takes over
+  after a usage limit gets the full timeout too, for a panelist or the chair, so a run with
+  fallbacks can take three or four times the timeout. If your shell tool caps how long a command
+  can run, start `so ask` in the background (without `-q`): its first stderr line is
+  `so: run <id>`, and `so runs show <id>` prints the answer once that run is done (until then it
+  says the run may still be running). Don't use `so runs show last` for this; another run may
+  have finished since. A run that is killed outright is not recorded. One that is interrupted
+  (Ctrl-C) is saved with whatever had answered.
 - The answer is markdown on stdout. Errors go to stderr, and so does progress when stderr is a
   terminal or with `-v`.
 - If one panelist fails, the others still return. The exit code is 1 if every panelist failed (or

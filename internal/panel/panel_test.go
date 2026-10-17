@@ -1,10 +1,12 @@
 package panel
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -298,5 +300,29 @@ func TestChairPromptBoundsEachAnswer(t *testing.T) {
 	}
 	if !strings.Contains(got, "cut here: the full answer is 2097153 bytes") || !strings.Contains(got, "short") {
 		t.Errorf("missing the cut marker or the short answer")
+	}
+}
+
+func TestAnonymousStartLinesAreInLetterOrder(t *testing.T) {
+	fake := fakeCLI(t, `cat >/dev/null; echo ok`)
+	var buf bytes.Buffer
+	runner := &Runner{Backends: map[string]config.Backend{"pi": {Command: fake}}, Progress: &buf}
+	p := Panel{
+		ModeName:  "general",
+		Panelists: []config.Panelist{{Backend: "pi", Model: "a"}, {Backend: "pi", Model: "b"}, {Backend: "pi", Model: "c"}},
+		Anonymous: true,
+	}
+	for range 10 {
+		buf.Reset()
+		runner.Run(context.Background(), p, "q")
+		var starts []string
+		for _, l := range strings.Split(buf.String(), "\n") {
+			if strings.HasPrefix(l, "so: … ") {
+				starts = append(starts, strings.TrimPrefix(l, "so: … "))
+			}
+		}
+		if want := []string{"Panelist A", "Panelist B", "Panelist C"}; !slices.Equal(starts, want) {
+			t.Fatalf("start lines = %q, want %q", starts, want)
+		}
 	}
 }

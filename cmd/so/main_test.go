@@ -162,11 +162,20 @@ chair = { backend = "pi", model = "chair" }
 		t.Fatal(err)
 	}
 
-	out := captureStdout(t, func() {
-		if code := run(context.Background(), []string{"ask", "--config", cfg, "--no-repo", "-q", "is this ok?"}); code != 0 {
-			t.Fatalf("ask exit code = %d", code)
-		}
+	var out string
+	stderr := captureStderr(t, func() {
+		out = captureStdout(t, func() {
+			if code := run(context.Background(), []string{"ask", "--config", cfg, "--no-repo", "is this ok?"}); code != 0 {
+				t.Fatalf("ask exit code = %d", code)
+			}
+		})
 	})
+	// The run ID is announced on stderr before the panel runs, and matches
+	// the one in the answer.
+	id, _, _ := strings.Cut(strings.TrimPrefix(strings.SplitN(stderr, "\n", 2)[0], "so: run "), "\n")
+	if !history.IsRunFile(id+".json") || !strings.Contains(out, "run `"+id+"`") {
+		t.Errorf("stderr should start with the run ID shown in the answer:\nstderr %q\nout %q", stderr, out)
+	}
 	if strings.Contains(out, "pi:alpha") || strings.Contains(out, "Panel key") {
 		t.Errorf("ask output should be blind:\n%s", out)
 	}
@@ -364,10 +373,6 @@ func TestSkillInstallFollowsAMovedHarnessHome(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".codex")); !os.IsNotExist(err) {
 		t.Errorf("install should not create ~/.codex when CODEX_HOME is set (err %v)", err)
-	}
-	// Uninstall finds it there too.
-	if p := skillDirs[1].paths(home); p[0] != filepath.Join(codexHome, "skills") || len(p) != 2 {
-		t.Errorf("codex skill paths = %v", p)
 	}
 }
 

@@ -24,17 +24,17 @@ func Markdown(w io.Writer, r panel.Result) error {
 
 	b.WriteString("# Second opinion\n\n")
 	if r.Run != "" {
-		fmt.Fprintf(&b, "run `%s` · ", r.Run)
+		fmt.Fprintf(&b, "run `%s` · ", oneLine(r.Run))
 	}
 	if r.Profile != "" {
-		fmt.Fprintf(&b, "profile `%s` · ", r.Profile)
+		fmt.Fprintf(&b, "profile `%s` · ", oneLine(r.Profile))
 	}
-	fmt.Fprintf(&b, "mode `%s` · %d of %d panelists responded\n", r.Mode, ok, len(r.Opinions))
+	fmt.Fprintf(&b, "mode `%s` · %d of %d panelists responded\n", oneLine(r.Mode), ok, len(r.Opinions))
 	if r.Attached != "" {
-		fmt.Fprintf(&b, "attached: %s\n", r.Attached)
+		fmt.Fprintf(&b, "attached: %s\n", oneLine(r.Attached))
 	}
 	if r.Workspace != "" {
-		fmt.Fprintf(&b, "read-only repo access: `%s`\n", r.Workspace)
+		fmt.Fprintf(&b, "read-only repo access: `%s`\n", oneLine(r.Workspace))
 	}
 
 	level := "##"
@@ -62,8 +62,15 @@ func Markdown(w io.Writer, r panel.Result) error {
 		writeKey(&b, r)
 	}
 
-	_, err := io.WriteString(w, b.String())
+	// Everything printed is cleaned, not only the answers: names and paths
+	// in the header come from the repository too.
+	_, err := io.WriteString(w, CleanText(b.String()))
 	return err
+}
+
+// oneLine keeps a header value on its line.
+func oneLine(s string) string {
+	return strings.NewReplacer("\n", " ", "\t", " ").Replace(CleanText(s))
 }
 
 func fellBack(r panel.Result) bool {
@@ -135,11 +142,11 @@ func plural(n int) string {
 
 func writeBody(b *strings.Builder, o panel.Opinion) {
 	if o.OK() {
-		b.WriteString(demoteHeadings(strings.TrimSpace(cleanText(o.Output))))
+		b.WriteString(demoteHeadings(strings.TrimSpace(CleanText(o.Output))))
 		b.WriteString("\n")
 		return
 	}
-	fmt.Fprintf(b, "```\n%s\n```\n", strings.TrimSpace(cleanText(o.Error)))
+	fmt.Fprintf(b, "```\n%s\n```\n", strings.TrimSpace(CleanText(o.Error)))
 	if hint := o.ErrorKind.Hint(); hint != "" {
 		fmt.Fprintf(b, "\n%s\n", hint)
 	}
@@ -148,30 +155,69 @@ func writeBody(b *strings.Builder, o panel.Opinion) {
 // demoteHeadings moves a model's markdown headings two levels down, so an
 // answer's "## Verdict" sits under so's own "## Panelist A" or "### Panelist
 // A", and an answer can't pass off a "## Panel synthesis" or "## Panel key"
-// of its own as one of so's sections. Fenced code blocks are left alone.
+// of its own as one of so's sections. Fenced code follows CommonMark's rules
+// (an opening fence of three or more backticks or tildes, indented at most
+// three spaces, closed by a run of the same character at least as long), and
+// a fence left open is closed at the end, so it can't swallow what follows. A
+// setext underline ("Panel key" then "---") gets a blank line before it,
+// which makes it a plain rule.
 func demoteHeadings(s string) string {
 	lines := strings.Split(s, "\n")
-	fence := ""
-	for i, l := range lines {
+	out := make([]string, 0, len(lines)+1)
+	var fenceChar byte
+	fenceLen := 0
+	prevText := false
+	for _, l := range lines {
 		t := strings.TrimLeft(l, " ")
+		shallow := len(l)-len(t) <= 3
 		switch {
-		case fence != "":
-			if strings.HasPrefix(t, fence) {
-				fence = ""
+		case fenceLen > 0:
+			if shallow && closesFence(t, fenceChar, fenceLen) {
+				fenceLen = 0
 			}
-		case strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~"):
-			fence = t[:3]
-		case len(l)-len(t) <= 3 && strings.HasPrefix(t, "#"):
-			lines[i] = "##" + t
+		case !shallow:
+		case fenceOpener(t) > 0:
+			fenceChar, fenceLen = t[0], fenceOpener(t)
+		case strings.HasPrefix(t, "#"):
+			l = "##" + t
+		case prevText && setextUnderline(t):
+			out = append(out, "")
 		}
+		out = append(out, l)
+		prevText = fenceLen == 0 && strings.TrimSpace(l) != "" && !strings.HasPrefix(strings.TrimLeft(l, " "), "#")
 	}
-	return strings.Join(lines, "\n")
+	if fenceLen > 0 {
+		out = append(out, strings.Repeat(string(fenceChar), fenceLen))
+	}
+	return strings.Join(out, "\n")
 }
 
-// cleanText drops control characters other than newline and tab, so model
+// fenceOpener returns the length of the code fence t opens, or 0.
+func fenceOpener(t string) int {
+	if t == "" || (t[0] != '`' && t[0] != '~') {
+		return 0
+	}
+	n := len(t) - len(strings.TrimLeft(t, t[:1]))
+	if n < 3 || (t[0] == '`' && strings.Contains(t[n:], "`")) {
+		return 0
+	}
+	return n
+}
+
+func closesFence(t string, c byte, n int) bool {
+	rest := strings.TrimLeft(t, string(c))
+	return len(t)-len(rest) >= n && strings.TrimSpace(rest) == ""
+}
+
+func setextUnderline(t string) bool {
+	t = strings.TrimRight(t, " \t")
+	return t != "" && (strings.Trim(t, "=") == "" || strings.Trim(t, "-") == "")
+}
+
+// CleanText drops control characters other than newline and tab, so model
 // output or a CLI's error can't move the cursor or rewrite the terminal
 // (escape sequences, carriage returns, C1 controls).
-func cleanText(s string) string {
+func CleanText(s string) string {
 	return strings.Map(func(r rune) rune {
 		if r == '\n' || r == '\t' {
 			return r

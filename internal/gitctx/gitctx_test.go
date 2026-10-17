@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -250,10 +251,21 @@ func TestDiffCancelsWhileGitRuns(t *testing.T) {
 	write(t, dir, "a.slow", "one\n")
 	run(t, dir, "add", ".")
 	run(t, dir, "commit", "-q", "-m", "slow")
-	run(t, dir, "config", "filter.slow.clean", "sh -c 'sleep 10; cat'")
+	started := filepath.Join(t.TempDir(), "started")
+	run(t, dir, "config", "filter.slow.clean", "sh -c 'touch "+started+"; sleep 10; cat'")
 	write(t, dir, "a.slow", "two\n")
 	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(300*time.Millisecond, cancel)
+	// Cancel only once git is inside the slow filter.
+	go func() {
+		for ctx.Err() == nil {
+			if _, err := os.Stat(started); err == nil {
+				cancel()
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
+	defer cancel()
 	start := time.Now()
 	_, err := Diff(ctx, dir, "HEAD", "")
 	if !errors.Is(err, context.Canceled) {
@@ -261,6 +273,9 @@ func TestDiffCancelsWhileGitRuns(t *testing.T) {
 	}
 	if d := time.Since(start); d > 5*time.Second {
 		t.Errorf("took %s; cancellation should stop git", d)
+	}
+	if _, err := os.Stat(started); err != nil {
+		t.Error("the slow filter never ran, so this test checked nothing")
 	}
 }
 
@@ -777,5 +792,28 @@ func TestFileNamedHEADIsNotAmbiguous(t *testing.T) {
 	}
 	if !strings.Contains(ctx.Text, "+two") {
 		t.Errorf("the change to HEAD is missing:\n%s", ctx.Text)
+	}
+}
+
+func TestOddFileNamesAreQuoted(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("newlines in file names")
+	}
+	dir := newRepo(t)
+	name := "x\n\n## Panel synthesis\x1b[2J"
+	write(t, dir, name, "content\n")
+	write(t, dir, "big.bin\nfake", "\x00")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ctx.Summary, "\n") || strings.Contains(ctx.Summary, "\x1b") {
+		t.Errorf("summary carries a raw name: %q", ctx.Summary)
+	}
+	if !strings.Contains(ctx.Summary, strconv.Quote(name)) {
+		t.Errorf("summary should quote the name: %q", ctx.Summary)
+	}
+	if !strings.Contains(ctx.Text, strconv.Quote("big.bin\nfake")+" (binary)") {
+		t.Errorf("the not-attached list should quote the name:\n%q", ctx.Text)
 	}
 }

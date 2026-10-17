@@ -64,7 +64,7 @@ func IsRunFile(name string) bool { return runFileName.MatchString(name) }
 func NewID(t time.Time) string {
 	b := make([]byte, 4)
 	rand.Read(b)
-	return t.Format(idTimeLayout) + "-" + hex.EncodeToString(b)
+	return t.UTC().Format(idTimeLayout) + "-" + hex.EncodeToString(b)
 }
 
 // Save writes the record privately, then prunes runs older than maxAge.
@@ -112,7 +112,7 @@ func Prune(dir string, cutoff time.Time) {
 			continue
 		}
 		id := strings.TrimSuffix(e.Name(), ".json")
-		t, err := time.ParseInLocation(idTimeLayout, id[:min(len(id), len(idTimeLayout))], time.Local)
+		t, err := time.ParseInLocation(idTimeLayout, id[:min(len(id), len(idTimeLayout))], time.UTC)
 		if err != nil {
 			info, err := e.Info()
 			if err != nil {
@@ -170,7 +170,7 @@ func Load(dir, ref string) (Record, error) {
 	}
 	switch len(matches) {
 	case 0:
-		return Record{}, fmt.Errorf("no run matches %q (see `so runs`)", ref)
+		return Record{}, fmt.Errorf("no run matches %q: it may still be running, or was not recorded (see `so runs`)", ref)
 	case 1:
 		return read(dir, matches[0])
 	}
