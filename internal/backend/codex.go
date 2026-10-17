@@ -172,7 +172,8 @@ func parseCodexFeatures(out string) []string {
 
 // codexLockdown disables every feature except the network ones, and the shell
 // tools too unless the panelist has a workspace to read. It also turns off web
-// search, so nothing a panelist does reaches beyond the model provider.
+// search. The read-only sandbox, not this list, is what keeps commands from
+// writing anything.
 func codexLockdown(features []string, workspace bool) []string {
 	var args []string
 	for _, f := range features {

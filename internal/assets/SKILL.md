@@ -92,8 +92,9 @@ when you report the result.
   (15 minutes by default), and the chair runs after the panel, so give the command at least
   twice that, and do not start it again while it is still running. If your shell tool caps how
   long a command can run, start `so ask` in the background, or pass a `--timeout` well under half
-  that cap. A run that is killed before it finishes is not recorded; a background run is, and
-  `so runs show last` prints its answer once it is done.
+  that cap. A run that is killed outright is not recorded. One that is interrupted (Ctrl-C) is
+  saved with whatever had answered, and a background run is recorded as usual: `so runs show last`
+  prints its answer once it is done.
 - The answer is markdown on stdout. Errors go to stderr, and so does progress when stderr is a
   terminal or with `-v`.
 - If one panelist fails, the others still return. The exit code is 1 if every panelist failed (or
@@ -136,7 +137,7 @@ it is signed in and find the models it can use:
 |---|---|---|
 | `claude` (Claude Code) | `claude auth status`: `loggedIn`, and `authMethod` shows whether it uses a subscription or a metered API key. `so doctor` also warns if `ANTHROPIC_API_KEY` or a Codex API key is set in the environment, which panelists inherit | The aliases listed under `--model` in `claude --help`, such as `opus` (strongest) and `sonnet` (faster). Aliases always point to the latest model, so prefer them to pinned IDs. |
 | `codex` (Codex CLI) | `codex login status` | `codex debug models` prints the catalog as JSON. Use entries with `"visibility": "list"`. Each entry lists its `supported_reasoning_levels`. Panelists run without `~/.codex/config.toml`, so its `model` is not used: always set a Codex `model`. |
-| `pi` | `pi --list-models` lists models only for providers it has credentials for. `pi auth check --provider <name>` checks one provider. | Use the `provider/model` IDs from `pi --list-models`, such as `ollama/glm-5.3:cloud`. pi's own default is `defaultProvider`/`defaultModel` in `~/.pi/agent/settings.json`. |
+| `pi` | `pi --list-models` lists models only for providers it has credentials for. `pi auth check --provider <name>` checks one provider. | Use the `provider/model` IDs from `pi --list-models`, such as `ollama/glm-5.3:cloud`. pi's own default is `defaultProvider`/`defaultModel` in `~/.pi/agent/settings.json`. If `so doctor` warns about the developer role for an Ollama provider, tell the user: without that one-line fix in `~/.pi/agent/models.json`, some Ollama models ignore `so`'s instructions. |
 
 If a CLI is installed but not signed in, tell the user rather than fixing it yourself.
 

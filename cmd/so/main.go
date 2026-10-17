@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -666,6 +667,11 @@ func cmdDoctor(ctx context.Context, args []string) int {
 		for _, k := range apiKeyVars(name, bc.Env) {
 			fmt.Printf("  ! %s is set; %s may bill that API account rather than your subscription\n", k, name)
 		}
+		if name == "pi" {
+			for _, w := range piDeveloperRoleProviders(piAgentDir(bc.Env)) {
+				fmt.Printf("  ! %s\n", w)
+			}
+		}
 	}
 	if found == 0 {
 		return fail(errors.New("none of the supported CLIs (claude, codex, pi) are installed"))
@@ -795,6 +801,68 @@ func apiKeyVars(name string, env map[string]string) []string {
 		}
 	}
 	return set
+}
+
+// piAgentDir is where pi keeps its config: PI_CODING_AGENT_DIR (from the
+// backend's config env or the environment), or ~/.pi/agent.
+func piAgentDir(env map[string]string) string {
+	if d, ok := env["PI_CODING_AGENT_DIR"]; ok && d != "" {
+		return d
+	}
+	if d := os.Getenv("PI_CODING_AGENT_DIR"); d != "" {
+		return d
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".pi", "agent")
+}
+
+// piDeveloperRoleProviders finds Ollama providers in pi's models.json that
+// send system prompts with the "developer" role. pi does that for reasoning
+// models on OpenAI-compatible endpoints unless compat.supportsDeveloperRole
+// is false, and Ollama ignores the role for some models (Kimi and GLM, in
+// testing), so their panelists never see so's instructions.
+func piDeveloperRoleProviders(agentDir string) []string {
+	data, err := os.ReadFile(filepath.Join(agentDir, "models.json"))
+	if err != nil {
+		return nil
+	}
+	type compat struct {
+		SupportsDeveloperRole *bool `json:"supportsDeveloperRole"`
+	}
+	var cfg struct {
+		Providers map[string]struct {
+			API     string  `json:"api"`
+			BaseURL string  `json:"baseUrl"`
+			Compat  *compat `json:"compat"`
+			Models  []struct {
+				ID        string  `json:"id"`
+				Reasoning bool    `json:"reasoning"`
+				Compat    *compat `json:"compat"`
+			} `json:"models"`
+		} `json:"providers"`
+	}
+	if json.Unmarshal(data, &cfg) != nil {
+		return nil
+	}
+	off := func(c *compat) bool { return c != nil && c.SupportsDeveloperRole != nil && !*c.SupportsDeveloperRole }
+	var out []string
+	for _, name := range slices.Sorted(maps.Keys(cfg.Providers)) {
+		p := cfg.Providers[name]
+		isOllama := strings.Contains(strings.ToLower(name+" "+p.BaseURL), "ollama") || strings.Contains(p.BaseURL, ":11434")
+		if p.API != "openai-completions" || !isOllama || off(p.Compat) {
+			continue
+		}
+		var affected []string
+		for _, m := range p.Models {
+			if m.Reasoning && !off(m.Compat) {
+				affected = append(affected, m.ID)
+			}
+		}
+		if len(affected) > 0 {
+			out = append(out, fmt.Sprintf("pi provider %q sends system prompts with the developer role, which Ollama ignores for some models (%d reasoning models), so their panelists may not see so's instructions. Fix: add \"compat\": {\"supportsDeveloperRole\": false} to that provider in %s", name, len(affected), filepath.Join(agentDir, "models.json")))
+		}
+	}
+	return out
 }
 
 // boundedOutput runs a command and returns at most 64 KB of its stdout. The

@@ -1,7 +1,8 @@
 // Package backend runs a single prompt through an agent CLI in headless mode.
 //
-// Every backend is invoked without sessions, MCP servers, or user config. By
-// default it also has no tools and runs in an empty scratch directory, so the
+// Every backend is invoked without sessions or MCP servers, and with as little
+// of the user's own configuration as each CLI allows (pi still uses your pi
+// settings, and Codex your global AGENTS.md). By default it also has no tools and runs in an empty scratch directory, so the
 // model answers only from the prompt. With a Workspace it runs there instead,
 // with read-only tools to search and read the code.
 package backend

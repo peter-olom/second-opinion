@@ -16,6 +16,8 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -108,7 +110,7 @@ func Diff(ctx context.Context, dir, base, nonce string) (Context, error) {
 	// is an error rather than a partial answer.
 	// One listing gives every path and its status, so the attachments, the
 	// filter check, and the diff allowlist all agree on the same set.
-	statuses, err := gitPaths(ctx, root, "diff", "--name-status", "--no-renames", "-z", from)
+	statuses, err := gitPaths(ctx, root, "diff", "--name-status", "--no-renames", "-z", from, "--")
 	if err != nil {
 		return Context{}, err
 	}
@@ -135,9 +137,25 @@ func Diff(ctx context.Context, dir, base, nonce string) (Context, error) {
 	// Files under a git filter (git-crypt, transcrypt, sops, LFS, ...) can be
 	// plaintext in the working tree while the repository stores ciphertext.
 	// They are left out of both the diff and the attachments.
-	filtered, err := filteredPaths(ctx, root, append(inDiff[:len(inDiff):len(inDiff)], untracked...))
+	all := append(inDiff[:len(inDiff):len(inDiff)], untracked...)
+	filtered, err := filteredPaths(ctx, root, all, "")
 	if err != nil {
 		return Context{}, err
+	}
+	// The check above reads the working tree's .gitattributes. If the change
+	// edits one, an uncommitted edit could drop a filter line, so the base's
+	// attributes count too.
+	if slices.ContainsFunc(all, func(p string) bool { return path.Base(p) == ".gitattributes" }) {
+		before, err := filteredPaths(ctx, root, all, from)
+		if err != nil {
+			if ctx.Err() != nil {
+				return Context{}, ctx.Err()
+			}
+			return Context{}, fmt.Errorf("--diff: this change edits .gitattributes, and its git attributes before the change could not be checked (git 2.40 or later is needed): %v", err)
+		}
+		for p := range before {
+			filtered[p] = true
+		}
 	}
 	// --no-textconv and --no-ext-diff keep configured drivers (which might
 	// decrypt secrets or run arbitrary commands) out of what is sent.
@@ -163,7 +181,7 @@ func Diff(ctx context.Context, dir, base, nonce string) (Context, error) {
 		return true
 	}, "-c", "core.quotePath=false", "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false",
 		"diff", "--src-prefix=a/", "--dst-prefix=b/", "--submodule=short",
-		"--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", from)
+		"--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", from, "--")
 	if err != nil {
 		return Context{}, err
 	}
@@ -486,20 +504,27 @@ func diffHeaderPath(rest string) (string, bool) {
 // .gitattributes. A diff driver alone is not enough: git's built-in ones
 // (diff=golang, diff=python, ...) only shape hunk headers, and --no-textconv
 // stops any configured textconv from running.
-func filteredPaths(ctx context.Context, root string, paths []string) (map[string]bool, error) {
+func filteredPaths(ctx context.Context, root string, paths []string, source string) (map[string]bool, error) {
 	filtered := map[string]bool{}
 	if len(paths) == 0 {
 		return filtered, nil
 	}
 	var out, stderr limitedBuffer
 	out.limit, stderr.limit = 16<<20, 64<<10
-	cmd := exec.CommandContext(ctx, "git", "-c", "core.fsmonitor=false", "check-attr", "-z", "--stdin", "filter")
+	args := []string{"-c", "core.fsmonitor=false", "check-attr", "-z", "--stdin"}
+	if source != "" {
+		args = append(args, "--source", source) // that commit's .gitattributes
+	}
+	cmd := exec.CommandContext(ctx, "git", append(args, "filter")...)
 	cmd.Dir = root
 	cmd.Env = append(gitEnv(), "GIT_OPTIONAL_LOCKS=0")
 	cmd.WaitDelay = 5 * time.Second
 	cmd.Stdin = strings.NewReader(strings.Join(paths, "\x00") + "\x00")
 	cmd.Stdout, cmd.Stderr = &out, &stderr
-	if err := cmd.Run(); err != nil {
+	procgroup.Isolate(cmd)
+	err := cmd.Run()
+	procgroup.Kill(cmd)
+	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}

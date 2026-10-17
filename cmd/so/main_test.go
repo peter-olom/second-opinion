@@ -305,14 +305,42 @@ func TestSkillInstallRefusesSymlinks(t *testing.T) {
 	if err := os.Symlink(victim, filepath.Join(dir, "second-opinion", "SKILL.md")); err != nil {
 		t.Fatal(err)
 	}
-	captureStderr(t, func() {
+	stderr := captureStderr(t, func() {
 		captureStdout(t, func() {
 			if code := run(context.Background(), []string{"skill", "install", "--dir", dir}); code == 0 {
 				t.Error("install wrote through a symlink")
 			}
 		})
 	})
+	if want := filepath.Join(dir, "second-opinion", "SKILL.md") + " is a symlink"; !strings.Contains(stderr, want) {
+		t.Errorf("stderr = %q, want the refusal for %s", stderr, want)
+	}
 	if data, _ := os.ReadFile(victim); string(data) != "keep me" {
 		t.Errorf("the symlink's target was overwritten: %q", data)
+	}
+}
+
+func TestPiDeveloperRoleProviders(t *testing.T) {
+	dir := t.TempDir()
+	write := func(js string) {
+		if err := os.WriteFile(filepath.Join(dir, "models.json"), []byte(js), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(`{"providers": {
+		"ollama": {"api": "openai-completions", "baseUrl": "http://127.0.0.1:11434/v1", "models": [{"id": "kimi", "reasoning": true}, {"id": "plain"}]},
+		"other": {"api": "openai-completions", "baseUrl": "https://api.example.com/v1", "models": [{"id": "x", "reasoning": true}]}
+	}}`)
+	got := piDeveloperRoleProviders(dir)
+	if len(got) != 1 || !strings.Contains(got[0], `"ollama"`) || !strings.Contains(got[0], "1 reasoning model") {
+		t.Errorf("warnings = %q, want one for the ollama provider", got)
+	}
+	write(`{"providers": {"ollama": {"api": "openai-completions", "baseUrl": "http://127.0.0.1:11434/v1", "compat": {"supportsDeveloperRole": false}, "models": [{"id": "kimi", "reasoning": true}]}}}`)
+	if got := piDeveloperRoleProviders(dir); len(got) != 0 {
+		t.Errorf("a provider with the fix should not warn: %q", got)
+	}
+	write(`{"providers": {"ollama": {"api": "openai-completions", "baseUrl": "http://127.0.0.1:11434/v1", "models": [{"id": "kimi", "reasoning": true, "compat": {"supportsDeveloperRole": false}}]}}}`)
+	if got := piDeveloperRoleProviders(dir); len(got) != 0 {
+		t.Errorf("a model-level fix should not warn: %q", got)
 	}
 }

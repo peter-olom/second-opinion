@@ -719,3 +719,39 @@ func TestBaseWithoutMergeBaseIsAnError(t *testing.T) {
 		t.Errorf("err = %v, want a refusal without a merge-base", err)
 	}
 }
+
+func TestFilterRemovedFromGitattributesStillCounts(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, ".gitattributes", "*.enc filter=crypt\n")
+	write(t, dir, "s.enc", "ciphertext\n")
+	run(t, dir, "add", ".")
+	run(t, dir, "commit", "-q", "-m", "enc")
+	// An uncommitted edit drops the filter line; the working copy is plaintext.
+	write(t, dir, ".gitattributes", "")
+	write(t, dir, "s.enc", "PLAINTEXT-SECRET\n")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ctx.Text, "PLAINTEXT-SECRET") {
+		t.Errorf("a file filtered before the change was sent:\n%s", ctx.Text)
+	}
+	if !strings.Contains(ctx.Text, "s.enc (git filter; may be encrypted)") {
+		t.Errorf("s.enc should be listed as filtered:\n%s", ctx.Text)
+	}
+}
+
+func TestFileNamedHEADIsNotAmbiguous(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, "HEAD", "one\n")
+	run(t, dir, "add", "HEAD")
+	run(t, dir, "commit", "-q", "-m", "a file named HEAD")
+	write(t, dir, "HEAD", "two\n")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ctx.Text, "+two") {
+		t.Errorf("the change to HEAD is missing:\n%s", ctx.Text)
+	}
+}

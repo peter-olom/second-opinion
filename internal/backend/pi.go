@@ -8,15 +8,20 @@ import (
 	"strings"
 )
 
-// pi runs pi in print mode with no extensions, skills, project-local resources,
-// or session. In a workspace it gets the read-only tools and the project's
-// context files; otherwise it has no tools at all.
+// pi runs pi in print mode with no extensions, skills, prompt templates,
+// context files, startup network operations, or session. Your pi settings
+// (default model, providers) still apply. In a workspace it gets the
+// read-only tools; otherwise it has no tools at all.
 //
 // pi migrates files in its working directory at startup. The one project-level
 // migration in pi 1.3 renames .pi/commands to .pi/prompts when only the first
 // exists; in such a repository pi is not run at all, so a review can never
 // modify the repository.
 type pi struct{ opts Options }
+
+// piBasePrompt replaces pi's default system prompt; the panelist's own
+// instructions follow it from the append file.
+const piBasePrompt = "You are answering a request from another AI agent. Your instructions follow."
 
 func (p pi) Run(ctx context.Context, req Request) (string, error) {
 	if req.Workspace != "" && piWouldMigrate(req.Workspace) {
@@ -26,10 +31,12 @@ func (p pi) Run(ctx context.Context, req Request) (string, error) {
 	// trusted project) only when no --append-system-prompt is given, so one
 	// is always passed. pi reads the value as a file if a file by that name
 	// exists, relative to its working directory (the repository, with repo
-	// access), so it is an absolute path to a harmless file in the private
-	// scratch folder rather than literal text a repo file could shadow.
+	// access), so it is an absolute path to a file in the private scratch
+	// folder rather than literal text a repo file could shadow. The file
+	// carries the real system prompt, which keeps it out of the process
+	// list; --system-prompt only replaces pi's default coding prompt.
 	appendFile := filepath.Join(req.Dir, "append-system-prompt.md")
-	if err := os.WriteFile(appendFile, []byte("\n"), 0o600); err != nil {
+	if err := os.WriteFile(appendFile, []byte(req.System+"\n"), 0o600); err != nil {
 		return "", err
 	}
 	args := []string{
@@ -39,7 +46,8 @@ func (p pi) Run(ctx context.Context, req Request) (string, error) {
 		"--no-skills",
 		"--no-prompt-templates",
 		"--no-approve",
-		"--system-prompt", req.System,
+		"--offline", // no startup network operations, such as package installs
+		"--system-prompt", piBasePrompt,
 		"--append-system-prompt", appendFile,
 	}
 	// Never load AGENTS.md context files: a reviewed repository's could

@@ -151,7 +151,8 @@ The caller always writes the prompt. There are two ways to give the panel more c
   are attached: symlinks are never followed, and binary, very large, or special files are listed but
   not attached. Git's textconv and external diff drivers are off, and files with a git `filter` in
   `.gitattributes` (git-crypt, transcrypt, sops-style filters, LFS, …) are left out of both the diff
-  and the attachments, since their working copies may be decrypted. If there are too many changed
+  and the attachments, since their working copies may be decrypted (if the change edits
+  `.gitattributes`, a filter in either version counts). If there are too many changed
   files to check this, `--diff` stops rather than send a partial check. Untracked files are attached
   unless git ignores them, so add anything other tools leave in your working tree to `.gitignore` or
   your global excludes. Limits: 1 MB of diff, 256 KB per file, 1.5 MB of files in total. This only
@@ -198,16 +199,23 @@ input can. For code you don't trust (a third-party pull request, a fresh clone),
 and attach what matters with `--diff` or `-f`.
 
 System prompts, including your custom mode instructions, are passed to claude and codex as
-command-line arguments, which other users on the same machine can see in the process list. The
-prompt itself always goes through stdin.
+command-line arguments, which other users on the same machine can see in the process list. pi gets
+its system prompt from a private (`0600`) file in the scratch folder instead. The prompt itself
+always goes through stdin.
 
 The Codex lockdown asks Codex for its feature list (`codex features list`), which reads your
 `~/.codex/config.toml`. If that fails, Codex panelists stop with an error rather than run with
 their tools unlocked.
 
 A reviewed repository's own `.codex/config.toml` (MCP servers, features) and pi files under
-`.pi/` (extensions, settings) are not loaded: in testing, an MCP server and an extension planted in
-a repository did not run while a panel reviewed it.
+`.pi/` (extensions, settings, packages) are not loaded: in testing, an MCP server, an extension, and
+a package planted in a repository did not run or install while a panel reviewed it.
+
+If you use Ollama through pi, check `so doctor`. pi sends the system prompt with the "developer"
+role to reasoning models on OpenAI-compatible endpoints, and Ollama ignores that role for some
+models (Kimi and GLM, in testing), so those panelists never see `so`'s instructions or the mode's
+format. Adding `"compat": {"supportsDeveloperRole": false}` to the Ollama provider in
+`~/.pi/agent/models.json` fixes it, and `so doctor` warns when it is missing.
 
 pi migrates files in its working directory when it starts. The one project-level migration in pi
 1.3 renames `.pi/commands/` to `.pi/prompts/`. In a repository where that would happen, `so` doesn't
@@ -215,9 +223,11 @@ run the pi panelist at all, and it reports why. A later pi version could add mig
 
 Panelists inherit your environment, as the CLIs need it to run and sign in. Codex runs commands
 with only core variables (`HOME`, `PATH`, …; `shell_environment_policy.inherit = "core"`), so its
-shell doesn't see your API keys and tokens. Codex's agent skills are hidden from it too (its
-skills catalog gets a one-token budget), since Codex has no switch to turn them off. pi's `read` with repo access could read
-`/proc/self/environ` on Linux. If `ANTHROPIC_API_KEY` or `CODEX_API_KEY`/`OPENAI_API_KEY` is set,
+shell doesn't see your API keys and tokens in its own environment. On Linux, though, a panelist with
+repo access (codex's shell, pi's `read`) can still read the environment of `so` itself under
+`/proc`, which holds all of it. Codex's agent skills are hidden from it (its skills catalog gets a
+one-token budget), since Codex has no switch to turn them off. pi runs with `--offline`, so it makes
+no startup network requests, such as package installs. If `ANTHROPIC_API_KEY` or `CODEX_API_KEY`/`OPENAI_API_KEY` is set,
 that CLI may bill the API account instead of your subscription; `so doctor` warns about it, and a
 backend's config `env` can clear it (`env = { ANTHROPIC_API_KEY = "" }`).
 

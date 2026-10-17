@@ -22,6 +22,9 @@ const (
 	KindOther     ErrorKind = "other"
 )
 
+// Kinds lists every kind; keep it next to the constants above.
+var Kinds = []ErrorKind{KindContext, KindQuota, KindAuth, KindModel, KindTimeout, KindCancelled, KindOther}
+
 // The CLIs report failures as free text, so classification matches common
 // phrasings and HTTP status codes. Order matters:
 //   - unambiguous rate-limit signals come first, so a transcript that happens

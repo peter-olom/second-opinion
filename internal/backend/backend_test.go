@@ -249,7 +249,7 @@ func TestPiAppendPromptIsAScratchFile(t *testing.T) {
 	scratch := t.TempDir()
 	argsFile := filepath.Join(t.TempDir(), "args")
 	cli := script(t, "printf '%s\\n' \"$@\" > "+argsFile+"\ncat >/dev/null\necho ok\n")
-	pi{Options{Command: cli}}.Run(context.Background(), Request{System: "sys", Prompt: "q", Dir: scratch, Workspace: repo})
+	pi{Options{Command: cli}}.Run(context.Background(), Request{System: "SECRET-MODE-INSTRUCTIONS", Prompt: "q", Dir: scratch, Workspace: repo})
 	data, _ := os.ReadFile(argsFile)
 	args := strings.Split(string(data), "\n")
 	i := slices.Index(args, "--append-system-prompt")
@@ -260,8 +260,18 @@ func TestPiAppendPromptIsAScratchFile(t *testing.T) {
 	if !filepath.IsAbs(value) || filepath.Dir(value) != scratch {
 		t.Errorf("--append-system-prompt %q should be a file in the scratch folder %s", value, scratch)
 	}
-	if content, err := os.ReadFile(value); err != nil || strings.TrimSpace(string(content)) != "" {
-		t.Errorf("append file content = %q, %v; want a harmless empty file", content, err)
+	if content, err := os.ReadFile(value); err != nil || strings.TrimSpace(string(content)) != "SECRET-MODE-INSTRUCTIONS" {
+		t.Errorf("append file content = %q, %v; want the system prompt", content, err)
+	}
+	if info, err := os.Stat(value); err == nil && runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Errorf("append file mode = %v, want 0600", info.Mode().Perm())
+	}
+	// The system prompt stays out of argv, where other users could see it.
+	if strings.Contains(string(data), "SECRET-MODE-INSTRUCTIONS") {
+		t.Errorf("the system prompt is in pi's argv: %q", args)
+	}
+	if !slices.Contains(args, "--offline") {
+		t.Errorf("pi should run with --offline: %q", args)
 	}
 }
 
