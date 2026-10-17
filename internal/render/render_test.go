@@ -245,3 +245,20 @@ func TestAnswersCannotEscapeTheirQuote(t *testing.T) {
 		}
 	}
 }
+
+func TestHTMLCommentsCannotHideLaterSections(t *testing.T) {
+	res := anonymousResult()
+	res.Opinions[0].Output = "note <!-- start\n```html\n<!-- kept in code -->\n```"
+	var b strings.Builder
+	Markdown(&b, res)
+	out := b.String()
+	if strings.Contains(out, "note <!--") || !strings.Contains(out, "note &lt;!-- start") {
+		t.Errorf("an HTML comment outside code should be escaped:\n%s", out)
+	}
+	if !strings.Contains(out, "> <!-- kept in code -->") {
+		t.Errorf("code should be left alone:\n%s", out)
+	}
+	if q := Quote("<!-- x"); q != "> &lt;!-- x\n" {
+		t.Errorf("Quote = %q", q)
+	}
+}

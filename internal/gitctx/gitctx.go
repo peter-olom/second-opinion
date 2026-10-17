@@ -370,12 +370,18 @@ func gitEnv() []string {
 	for _, kv := range os.Environ() {
 		switch strings.SplitN(kv, "=", 2)[0] {
 		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
-			"GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX":
+			"GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX",
+			// GIT_CONFIG redirects only `git config`, so filter discovery
+			// would miss drivers that `git diff` still runs.
+			"GIT_CONFIG":
 			continue
 		}
 		env = append(env, kv)
 	}
-	return env
+	// Never prompt for credentials (git runs in its own process group, so a
+	// prompt would only stall), and never fetch missing objects in a
+	// partial clone: collecting a diff stays local.
+	return append(env, "GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1")
 }
 
 // sectionFilter decides, line by line, which sections of a git diff to keep:

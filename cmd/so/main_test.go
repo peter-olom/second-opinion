@@ -191,6 +191,12 @@ chair = { backend = "pi", model = "chair" }
 	if strings.Contains(blind, "pi:alpha") || strings.Contains(blind, "Panel key") {
 		t.Errorf("runs show should stay blind without --reveal:\n%s", blind)
 	}
+	for _, extra := range [][]string{{"--json"}, {"--prompt"}} {
+		out := captureStdout(t, func() { run(context.Background(), append([]string{"runs", "show", "last"}, extra...)) })
+		if strings.Contains(out, "pi:alpha") || strings.Contains(out, `"model": "alpha"`) {
+			t.Errorf("runs show last %v should stay blind without --reveal:\n%s", extra, out)
+		}
+	}
 	revealed := captureStdout(t, func() { run(context.Background(), []string{"runs", "show", "last", "--reveal"}) })
 	for _, want := range []string{"## Panel key", "`pi:alpha`", "`pi:beta`", "- Chair: `pi:chair`"} {
 		if !strings.Contains(revealed, want) {
@@ -509,5 +515,72 @@ func TestWithheldModeRepoAccessIsNoted(t *testing.T) {
 	stderr := captureStderr(t, func() { ws, _ = resolveWorkspace(context.Background(), false, false, &yes) })
 	if ws != "" || !strings.Contains(stderr, "no repo access for this mode: not inside a git repository") {
 		t.Errorf("workspace %q, stderr %q; want none, with a note", ws, stderr)
+	}
+}
+
+func TestIgnoredRoutingIsReported(t *testing.T) {
+	claudeDir, codexDir := t.TempDir(), t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+	t.Setenv("CODEX_HOME", codexDir)
+	if got := ignoredRouting("claude"); got != nil {
+		t.Errorf("no settings: %q", got)
+	}
+	os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(`{"env":{"CLAUDE_CODE_USE_BEDROCK":"1"},"hooks":{}}`), 0o600)
+	if got := ignoredRouting("claude"); len(got) != 1 || !strings.Contains(got[0], "env.CLAUDE_CODE_USE_BEDROCK") {
+		t.Errorf("claude = %q", got)
+	}
+	os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte("model_provider = \"azure\"\n[model_providers.azure]\nname = \"x\"\n"), 0o600)
+	if got := ignoredRouting("codex"); len(got) != 1 || !strings.Contains(got[0], "model_provider, model_providers") {
+		t.Errorf("codex = %q", got)
+	}
+	os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte("model = \"gpt\"\n"), 0o600)
+	if got := ignoredRouting("codex"); got != nil {
+		t.Errorf("plain config should not warn: %q", got)
+	}
+}
+
+func TestModeDefaultSkipsDotFolderRepos(t *testing.T) {
+	home := t.TempDir()
+	if h, err := filepath.EvalSymlinks(home); err == nil {
+		home = h
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	repo := filepath.Join(home, ".config")
+	os.MkdirAll(repo, 0o755)
+	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	t.Chdir(repo)
+	yes := true
+	var ws string
+	stderr := captureStderr(t, func() { ws, _ = resolveWorkspace(context.Background(), false, false, &yes) })
+	if ws != "" || !strings.Contains(stderr, "dot-folder") {
+		t.Errorf("mode default in ~/.config: workspace %q, stderr %q; want none, with a note", ws, stderr)
+	}
+	if ws, err := resolveWorkspace(context.Background(), true, false, nil); err != nil || ws != repo {
+		t.Errorf("--repo in ~/.config = %q, %v; want the repository", ws, err)
+	}
+}
+
+func TestUnwritableHistoryIsReportedOnce(t *testing.T) {
+	unsetEnv(t, backend.EnvGuard)
+	notDir := filepath.Join(t.TempDir(), "file")
+	os.WriteFile(notDir, []byte("x"), 0o600)
+	t.Setenv("XDG_STATE_HOME", notDir) // can't hold a folder
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "fake-pi")
+	os.WriteFile(fake, []byte("#!/bin/sh\ncat >/dev/null\necho ok\n"), 0o755)
+	cfg := filepath.Join(dir, "config.toml")
+	os.WriteFile(cfg, []byte(stubOtherBackends+"[backends.pi]\ncommand = \""+fake+"\"\n"), 0o644)
+	var out string
+	stderr := captureStderr(t, func() {
+		out = captureStdout(t, func() { run(context.Background(), []string{"ask", "--config", cfg, "--no-repo", "-w", "pi:m", "q"}) })
+	})
+	if strings.Count(stderr, "so:") != 1 || !strings.Contains(stderr, "won't be recorded") || strings.Contains(stderr, "so: run ") {
+		t.Errorf("stderr = %q, want one note and no run ID", stderr)
+	}
+	if strings.Contains(out, "run `") {
+		t.Errorf("the answer shows a run ID for an unrecorded run:\n%s", out)
 	}
 }

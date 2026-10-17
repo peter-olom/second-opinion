@@ -23,6 +23,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/BurntSushi/toml"
 	"github.com/spf13/pflag"
 
 	"github.com/peter-olom/second-opinion/internal/assets"
@@ -266,17 +267,19 @@ func cmdAsk(ctx context.Context, args []string) int {
 	// The ID is announced before the panel starts, so a caller running so in
 	// the background can wait for that exact run with so runs show <id>.
 	var id string
-	if cfg.Recording() {
+	recording := cfg.Recording()
+	if recording {
 		id = history.NewID(start)
 		if err := history.Writable(history.Dir()); err != nil {
 			fmt.Fprintln(os.Stderr, "so: this run won't be recorded:", err)
+			recording = false
 		} else if !*quiet {
 			fmt.Fprintf(os.Stderr, "so: run %s\n", id)
 		}
 	}
 	res := runner.Run(ctx, p, prompt)
 	res.Attached = attached
-	if cfg.Recording() {
+	if recording {
 		res.Run = id
 		if err := saveRun(cfg, p, prompt, res, start); err != nil {
 			fmt.Fprintln(os.Stderr, "so: could not record run:", err)
@@ -395,6 +398,13 @@ func resolveWorkspace(ctx context.Context, explicit, disabled bool, modeDefault 
 		return "", ctx.Err()
 	}
 	if err == nil {
+		// A repository inside a dot-folder under home (~/.config, ~/.claude)
+		// holds tokens, configs, or saved conversations; a mode never shares
+		// one on its own.
+		if !explicit && inHomeDotDir(root) {
+			fmt.Fprintln(os.Stderr, "so: no repo access for this mode: the repository is inside a dot-folder in your home directory; pass --repo to share it")
+			return "", nil
+		}
 		if !containsHome(root) {
 			return root, nil
 		}
@@ -418,6 +428,24 @@ func resolveWorkspace(ctx context.Context, explicit, disabled bool, modeDefault 
 	}
 	fmt.Fprintln(os.Stderr, "so: no repo access for this mode: not inside a git repository; pass --repo to share the current folder")
 	return "", nil
+}
+
+// inHomeDotDir reports whether dir is inside a dot-folder directly under the
+// home directory, such as ~/.config/nvim.
+func inHomeDotDir(dir string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	if h, err := filepath.EvalSymlinks(home); err == nil {
+		home = h
+	}
+	rel, err := filepath.Rel(home, dir)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return false
+	}
+	first, _, _ := strings.Cut(filepath.ToSlash(rel), "/")
+	return strings.HasPrefix(first, ".")
 }
 
 // checkHome reports whether the home directory can be resolved, which
@@ -737,6 +765,9 @@ func cmdDoctor(ctx context.Context, args []string) int {
 		for _, k := range apiKeyVars(name, bc.Env) {
 			fmt.Printf("  ! %s is set; %s may bill that API account rather than your subscription\n", k, name)
 		}
+		for _, w := range ignoredRouting(name) {
+			fmt.Printf("  ! %s\n", w)
+		}
 		if name == "pi" {
 			for _, w := range piDeveloperRoleProviders(piAgentDir(bc.Env)) {
 				fmt.Printf("  ! %s\n", w)
@@ -873,6 +904,64 @@ func apiKeyVars(name string, env map[string]string) []string {
 	return set
 }
 
+// ignoredRouting warns about provider routing in the user's own Claude or
+// Codex settings, which panelists run without (--setting-sources "",
+// --ignore-user-config). Without it a panelist falls back to the CLI's own
+// login, which may be a different provider or account than the user meant.
+func ignoredRouting(name string) []string {
+	home, _ := os.UserHomeDir()
+	dir := func(env, def string) string {
+		if v := os.Getenv(env); filepath.IsAbs(v) {
+			return v
+		}
+		return filepath.Join(home, def)
+	}
+	var found []string
+	var where string
+	switch name {
+	case "claude":
+		where = filepath.Join(dir("CLAUDE_CONFIG_DIR", ".claude"), "settings.json")
+		data, err := os.ReadFile(where)
+		if err != nil {
+			return nil
+		}
+		var s struct {
+			Env          map[string]any `json:"env"`
+			APIKeyHelper any            `json:"apiKeyHelper"`
+		}
+		if json.Unmarshal(data, &s) != nil {
+			return nil
+		}
+		for _, k := range []string{"ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"} {
+			if _, ok := s.Env[k]; ok {
+				found = append(found, "env."+k)
+			}
+		}
+		if s.APIKeyHelper != nil {
+			found = append(found, "apiKeyHelper")
+		}
+	case "codex":
+		where = filepath.Join(dir("CODEX_HOME", ".codex"), "config.toml")
+		var c map[string]any
+		if _, err := toml.DecodeFile(where, &c); err != nil {
+			return nil
+		}
+		for _, k := range []string{"model_provider", "model_providers", "openai_base_url", "chatgpt_base_url"} {
+			if _, ok := c[k]; ok {
+				found = append(found, k)
+			}
+		}
+	}
+	if len(found) == 0 {
+		return nil
+	}
+	verb := "ignore"
+	if name == "claude" {
+		verb = "likely ignore (they run with --setting-sources \"\")"
+	}
+	return []string{fmt.Sprintf("%s sets %s, which panelists %s, falling back to %s's own login. Set what they need in [backends.%s] env", where, strings.Join(found, ", "), verb, name, name)}
+}
+
 // piAgentDir is where pi keeps its config: PI_CODING_AGENT_DIR (from the
 // backend's config env or the environment), or ~/.pi/agent.
 func piAgentDir(env map[string]string) string {
@@ -940,12 +1029,20 @@ func piDeveloperRoleProviders(agentDir string) []string {
 // copy and WaitDelay can close the pipe even if a grandchild holds it open.
 func boundedOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = os.TempDir() // not the caller's repository, which a CLI could act on at startup
+	// A private folder: not the caller's repository, which a CLI could act
+	// on at startup, nor the shared temp directory, where others could plant
+	// files.
+	scratch, err := os.MkdirTemp("", "so-probe-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(scratch)
+	cmd.Dir = scratch
 	cmd.WaitDelay = 2 * time.Second
 	out := &cappedWriter{limit: 64 << 10}
 	cmd.Stdout = out
 	procgroup.Isolate(cmd)
-	err := cmd.Run()
+	err = cmd.Run()
 	procgroup.Kill(cmd) // helpers the CLI started don't outlive it
 	return out.buf, err
 }

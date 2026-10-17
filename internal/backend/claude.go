@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"unicode"
 )
 
 // claude runs Claude Code in print mode with no MCP servers, settings, or session.
@@ -104,19 +103,23 @@ func claudeEffort(e string) string {
 // Claude Code 2.1); the note tells the model to read past it. To fail closed
 // on whatever counts as a word start (Unicode spaces, punctuation, a diff's
 // "+"), every @ is defused unless the character before it in the original
-// text is a letter or digit, as in an email address.
+// text is an ASCII letter or digit, as in an email address.
 func defuseMentions(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
 	prev := rune(-1)
 	for _, r := range s {
 		b.WriteRune(r)
-		if r == '@' && !unicode.IsLetter(prev) && !unicode.IsDigit(prev) {
+		if r == '@' && !asciiAlnum(prev) {
 			b.WriteRune('\u200b')
 		}
 		prev = r
 	}
 	return b.String()
+}
+
+func asciiAlnum(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
 }
 
 func restoreMentions(s string) string { return strings.ReplaceAll(s, "@\u200b", "@") }

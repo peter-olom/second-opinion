@@ -109,6 +109,15 @@ func Save(dir string, r Record, maxAge time.Duration) error {
 	return nil
 }
 
+// IsTempFile reports whether name is one of Save's or Writable's temporary
+// files.
+func IsTempFile(name string) bool {
+	if rest, ok := strings.CutPrefix(name, ".tmp-"); ok {
+		return IsRunFile(rest)
+	}
+	return strings.HasPrefix(name, ".probe-")
+}
+
 // Writable reports whether runs can be saved in dir, so a run ID is only
 // announced for a run that can be recorded.
 func Writable(dir string) error {
@@ -134,6 +143,14 @@ func Prune(dir string, cutoff time.Time) {
 		return
 	}
 	for _, e := range entries {
+		// A save or probe cut short (so killed outright) leaves a temporary
+		// file, which may hold a whole record; it goes after an hour.
+		if IsTempFile(e.Name()) && e.Type().IsRegular() {
+			if info, err := e.Info(); err == nil && time.Since(info.ModTime()) > time.Hour {
+				os.Remove(filepath.Join(dir, e.Name()))
+			}
+			continue
+		}
 		if !IsRunFile(e.Name()) || !e.Type().IsRegular() {
 			continue
 		}

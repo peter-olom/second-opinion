@@ -151,7 +151,7 @@ func plural(n int) string {
 // whatever Markdown it holds. Only so's own hint stays outside.
 func writeBody(b *strings.Builder, o panel.Opinion) {
 	if o.OK() {
-		b.WriteString(quote(demoteHeadings(strings.TrimSpace(CleanText(o.Output)))))
+		b.WriteString(quote(escapeComments(demoteHeadings(strings.TrimSpace(CleanText(o.Output))))))
 		return
 	}
 	e := strings.TrimSpace(CleanText(o.Error))
@@ -162,9 +162,32 @@ func writeBody(b *strings.Builder, o panel.Opinion) {
 	}
 }
 
-// Quote turns s into a Markdown blockquote, so nothing in it can pass for
-// a top-level section.
-func Quote(s string) string { return quote(s) }
+// Quote turns untrusted text into a Markdown blockquote, so nothing in it
+// can pass for a top-level section.
+func Quote(s string) string { return quote(escapeComments(s)) }
+
+// escapeComments escapes "<!--" outside fenced code. In an HTML view of the
+// output, an unclosed comment would otherwise hide everything after it.
+func escapeComments(s string) string {
+	lines := strings.Split(s, "\n")
+	var fenceChar byte
+	fenceLen := 0
+	for i, l := range lines {
+		t := strings.TrimLeft(l, " ")
+		shallow := len(l)-len(t) <= 3
+		switch {
+		case fenceLen > 0:
+			if shallow && closesFence(t, fenceChar, fenceLen) {
+				fenceLen = 0
+			}
+		case shallow && fenceOpener(t) > 0:
+			fenceChar, fenceLen = t[0], fenceOpener(t)
+		default:
+			lines[i] = strings.ReplaceAll(l, "<!--", "&lt;!--")
+		}
+	}
+	return strings.Join(lines, "\n")
+}
 
 // quote turns s into a Markdown blockquote.
 func quote(s string) string {

@@ -459,6 +459,7 @@ func TestClaudeMentionsAreDefused(t *testing.T) {
 		"@Override\n\t@Test":             "@\u200bOverride\n\t@\u200bTest",
 		"+@/etc/passwd":                  "+@\u200b/etc/passwd",
 		"-@x .@y _@z %@w":                "-@\u200bx .@\u200by _@\u200bz %@\u200bw",
+		"é@/etc/passwd":                  "é@\u200b/etc/passwd",
 		"@@/x":                           "@\u200b@\u200b/x",
 		"+\tsee @~/.ssh/id_rsa":          "+\tsee @\u200b~/.ssh/id_rsa",
 	} {

@@ -251,3 +251,24 @@ func TestSaveLeavesNoPartialRecord(t *testing.T) {
 		t.Errorf("after a save the folder holds %v, want only the record", entries)
 	}
 }
+
+func TestPruneRemovesStaleTempFiles(t *testing.T) {
+	dir := t.TempDir()
+	stale := filepath.Join(dir, ".tmp-"+NewID(time.Now())+".json")
+	probe := filepath.Join(dir, ".probe-123")
+	fresh := filepath.Join(dir, ".tmp-"+NewID(time.Now())+".json")
+	other := filepath.Join(dir, ".tmp-notes")
+	for _, p := range []string{stale, probe, fresh, other} {
+		os.WriteFile(p, []byte("x"), 0o600)
+	}
+	old := time.Now().Add(-2 * time.Hour)
+	for _, p := range []string{stale, probe, other} {
+		os.Chtimes(p, old, old)
+	}
+	Prune(dir, time.Now().Add(-24*time.Hour))
+	for p, want := range map[string]bool{stale: false, probe: false, fresh: true, other: true} {
+		if _, err := os.Stat(p); (err == nil) != want {
+			t.Errorf("%s: exists = %v, want %v", filepath.Base(p), err == nil, want)
+		}
+	}
+}

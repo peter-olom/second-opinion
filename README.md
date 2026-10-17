@@ -81,8 +81,10 @@ send the request only to the models you named.
 In markdown output, each answer (and each error) is a blockquote: every line starts with `> `.
 Nothing inside a blockquote can be a top-level heading, and Markdown closes anything left open in it
 (an unclosed code fence, say) where the quote ends, so a model's text can't pass for one of `so`'s
-sections (`## Panel synthesis`, `## Panel key`) or hide the ones after it. Answer headings are also
-moved two levels down to read as subsections, and terminal control characters are removed. Use
+sections (`## Panel synthesis`, `## Panel key`) or hide the ones after it, in the text or in a
+Markdown renderer. HTML comments (`<!--`) outside code are escaped too; other raw HTML is left as is,
+so a viewer that renders raw HTML without sanitizing it could still be misled. Answer headings are
+also moved two levels down to read as subsections, and terminal control characters are removed. Use
 `--format json` when a program reads the result.
 
 The result goes to stdout. Progress goes to stderr when stderr is a terminal, or with `-v`. If some
@@ -211,6 +213,12 @@ did not load; a user-level `~/.claude/CLAUDE.md` was not tested), codex gets `--
 panelist is told not to use tools without repo access. One exception: Codex still loads your
 global `~/.codex/AGENTS.md` into every Codex panelist, since it has no switch to turn that off.
 
+The flags that keep your user settings out also drop any provider routing in them: Bedrock, Vertex,
+`ANTHROPIC_BASE_URL` or `apiKeyHelper` in `~/.claude/settings.json`, and `model_provider` in
+`~/.codex/config.toml`. A panelist then uses the CLI's own login, which may be another account or
+provider than you meant. `so doctor` warns when those settings are present; put what panelists
+need in the backend's `env` in `so`'s config.
+
 A reviewed repository's files can still try to steer a panelist that reads them, as any untrusted
 input can. For code you don't trust (a third-party pull request, a fresh clone), use `--no-repo`
 and attach what matters with `--diff` or `-f`.
@@ -288,8 +296,10 @@ agent harness's saved conversations.
 
 ## Configuration
 
-The config lives at `~/.config/second-opinion/config.toml`. You can point to a different file
-with `SECOND_OPINION_CONFIG` or `--config`.
+The config lives at `~/.config/second-opinion/config.toml`, or `$XDG_CONFIG_HOME/second-opinion/config.toml`
+when that is set to an absolute path. You can point to a different file with `SECOND_OPINION_CONFIG`
+or `--config`. Without an absolute home directory there is no default config, and the built-in
+defaults apply.
 
 ### Profiles
 

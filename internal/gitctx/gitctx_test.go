@@ -892,3 +892,35 @@ func TestBranchFilterRuleRemovedInWorkingTreeStillCounts(t *testing.T) {
 		})
 	}
 }
+
+func TestFilterDriversNeverRunWithGitConfigSet(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell filter")
+	}
+	dir := newRepo(t)
+	write(t, dir, ".gitattributes", "*.x filter=evil\n")
+	write(t, dir, "a.x", "one\n")
+	run(t, dir, "add", ".")
+	run(t, dir, "commit", "-q", "-m", "x")
+	marker := filepath.Join(t.TempDir(), "ran")
+	run(t, dir, "config", "filter.evil.clean", "sh -c 'touch "+marker+"; cat'")
+	write(t, dir, "a.x", "two\n")
+	// GIT_CONFIG redirects `git config` alone: discovery must not miss the
+	// repo's driver because of it.
+	t.Setenv("GIT_CONFIG", os.DevNull)
+	if _, err := Diff(context.Background(), dir, "HEAD", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("a filter driver ran with GIT_CONFIG set")
+	}
+}
+
+func TestGitNeverPromptsOrFetches(t *testing.T) {
+	env := strings.Join(gitEnv(), "\n")
+	for _, want := range []string{"GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1"} {
+		if !strings.Contains(env, want) {
+			t.Errorf("git's environment lacks %s", want)
+		}
+	}
+}

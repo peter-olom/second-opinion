@@ -137,7 +137,14 @@ func codexFeatures(ctx context.Context, o Options) ([]string, error) {
 	for k, v := range o.Env {
 		env = append(env, k+"="+v)
 	}
-	out, err := execCLI(ctx, Command("codex", o), []string{"features", "list"}, os.TempDir(), env, "")
+	// A private folder, not the shared temp directory, where another user
+	// could plant a .codex folder.
+	scratch, err := os.MkdirTemp("", "so-codex-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(scratch)
+	out, err := execCLI(ctx, Command("codex", o), []string{"features", "list"}, scratch, env, "")
 	switch {
 	case errors.Is(parent.Err(), context.DeadlineExceeded):
 		// The panelist's own timeout ran out during discovery.

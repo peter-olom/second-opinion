@@ -273,7 +273,7 @@ func planUninstall(cfg string, cfgParentIsLink, all bool) (plan []removal, notes
 				return nil, nil, err
 			}
 			for _, e := range entries {
-				if history.IsRunFile(e.Name()) && e.Type().IsRegular() {
+				if (history.IsRunFile(e.Name()) || history.IsTempFile(e.Name())) && e.Type().IsRegular() {
 					names = append(names, filepath.Join("runs", e.Name()))
 				}
 			}
