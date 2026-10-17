@@ -618,3 +618,62 @@ func TestAskPrunesEvenWhenItStopsEarly(t *testing.T) {
 		t.Errorf("an expired run survived an early exit (err %v)", err)
 	}
 }
+
+func TestDiffRefusesDotFolderReposUnlessConfirmed(t *testing.T) {
+	unsetEnv(t, backend.EnvGuard)
+	home := t.TempDir()
+	if h, err := filepath.EvalSymlinks(home); err == nil {
+		home = h
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	repo := filepath.Join(home, ".config")
+	os.MkdirAll(repo, 0o755)
+	for _, args := range [][]string{{"init", "-q"}, {"commit", "-q", "--allow-empty", "-m", "i"}} {
+		cmd := exec.Command("git", append([]string{"-C", repo, "-c", "user.email=a@b", "-c", "user.name=a"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	os.WriteFile(filepath.Join(repo, "hosts.yml"), []byte("oauth_token: SECRET\n"), 0o600)
+	t.Chdir(repo)
+	stderr := captureStderr(t, func() {
+		if code := run(context.Background(), []string{"ask", "--config", fakePiConfig(t), "--diff", "-w", "pi:x", "q"}); code != 1 {
+			t.Errorf("exit code = %d, want 1", code)
+		}
+	})
+	if !strings.Contains(stderr, "dot-folder") {
+		t.Errorf("stderr = %q, want the dot-folder refusal", stderr)
+	}
+}
+
+func TestCanaryChecksMentions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script")
+	}
+	dir := t.TempDir()
+	// A claude that, like Claude Code, expands an @path mention at the start
+	// of the text or after whitespace by reading the file.
+	fake := filepath.Join(dir, "claude")
+	os.WriteFile(fake, []byte(`#!/bin/sh
+prompt=$(cat)
+f=$(printf '%s' "$prompt" | grep -oE '(^|[[:space:]])@/[^[:space:]]+' | head -1 | sed 's/^[[:space:]]*@//')
+content=""
+[ -n "$f" ] && [ -f "$f" ] && content=$(cat "$f")
+printf '{"type":"result","subtype":"success","result":"saw %s"}\n' "$content"
+`), 0o755)
+	cfgPath := filepath.Join(dir, "config.toml")
+	os.WriteFile(cfgPath, []byte("[backends.claude]\ncommand = \""+fake+"\"\n[backends.codex]\ncommand = \"/nonexistent/c\"\n[backends.pi]\ncommand = \"/nonexistent/p\"\n"), 0o644)
+	var code int
+	out := captureStdout(t, func() {
+		code = run(context.Background(), []string{"doctor", "--canary", "--config", cfgPath, "-w", "claude:x"})
+	})
+	for _, check := range []string{"(tools)", "(mention)", "(mention, repo access)"} {
+		if !strings.Contains(out, "✓ claude:x "+check) {
+			t.Errorf("missing a passing %s check:\n%s", check, out)
+		}
+	}
+	if code != 0 {
+		t.Errorf("exit %d, want 0 with mentions defused:\n%s", code, out)
+	}
+}

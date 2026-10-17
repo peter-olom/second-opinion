@@ -166,28 +166,12 @@ func writeBody(b *strings.Builder, o panel.Opinion) {
 // can pass for a top-level section.
 func Quote(s string) string { return quote(escapeComments(s)) }
 
-// escapeComments escapes "<!--" outside fenced code. In an HTML view of the
-// output, an unclosed comment would otherwise hide everything after it.
-func escapeComments(s string) string {
-	lines := strings.Split(s, "\n")
-	var fenceChar byte
-	fenceLen := 0
-	for i, l := range lines {
-		t := strings.TrimLeft(l, " ")
-		shallow := len(l)-len(t) <= 3
-		switch {
-		case fenceLen > 0:
-			if shallow && closesFence(t, fenceChar, fenceLen) {
-				fenceLen = 0
-			}
-		case shallow && fenceOpener(t) > 0:
-			fenceChar, fenceLen = t[0], fenceOpener(t)
-		default:
-			lines[i] = strings.ReplaceAll(l, "<!--", "&lt;!--")
-		}
-	}
-	return strings.Join(lines, "\n")
-}
+// escapeComments escapes every "<!--". In an HTML view of the output, an
+// unclosed comment would otherwise hide everything after it, and telling
+// code from text takes a full Markdown parser (a fence in a list item or an
+// HTML block isn't one), so code is escaped too: "&lt;!--" there is visible,
+// unlike a hidden character would be.
+func escapeComments(s string) string { return strings.ReplaceAll(s, "<!--", "&lt;!--") }
 
 // quote turns s into a Markdown blockquote.
 func quote(s string) string {

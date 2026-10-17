@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -46,7 +47,28 @@ func Root(ctx context.Context, dir string) (string, error) {
 		return "", err
 	}
 	// Only git's line ending: a path may legitimately end in whitespace.
-	return strings.TrimSuffix(out, "\n"), nil // a CR could be part of the path
+	root := strings.TrimSuffix(out, "\n") // a CR could be part of the path
+	// core.worktree (in a copied .git/config) can name a work tree that
+	// doesn't contain dir, so repo access or --diff would cover some other
+	// folder entirely.
+	if !contains(root, dir) {
+		return "", fmt.Errorf("git reports %s as the work tree, which doesn't contain %s (core.worktree?); not using it", root, dir)
+	}
+	return root, nil
+}
+
+// contains reports whether dir is root or inside it, by their real paths.
+func contains(root, dir string) bool {
+	r, err1 := filepath.EvalSymlinks(root)
+	d, err2 := filepath.Abs(dir)
+	if err2 == nil {
+		d, err2 = filepath.EvalSymlinks(d)
+	}
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	rel, err := filepath.Rel(r, d)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // Context is the rendered review context for a set of changes.

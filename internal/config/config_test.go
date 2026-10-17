@@ -272,11 +272,18 @@ func TestSeverityModesDefineTheirScale(t *testing.T) {
 	}
 	// Panelists get only their own mode's text, so a mode whose format asks
 	// for severities has to define them.
+	checked := 0
+	defer func() {
+		if checked < 2 {
+			t.Errorf("checked %d modes; review and audit should both ask for severities", checked)
+		}
+	}()
 	for _, name := range cfg.ModeNames() {
 		m := cfg.Modes[name]
 		if !strings.Contains(m.Format, "severity") {
 			continue
 		}
+		checked++
 		for _, want := range []string{"blocker:", "major:", "minor:", "nit:", "Verdict: approve if"} {
 			if !strings.Contains(m.Instructions, want) {
 				t.Errorf("mode %s asks for severities but its instructions lack %q", name, want)
@@ -295,6 +302,7 @@ func TestLoadRejectsBadValues(t *testing.T) {
 		"dash model":         {"[profiles.p]\npanelists = [{ backend = \"pi\", model = \"--tools\" }]\n", "can't start with -"},
 		"dash provider":      {"[profiles.p]\npanelists = [{ backend = \"pi\", provider = \"-x\" }]\n", "can't start with -"},
 		"misspelled backend": {"[backends.cluade]\nenv = { ANTHROPIC_API_KEY = \"\" }\n", "unknown backend [backends.cluade]"},
+		"control name":       {"[profiles.p]\npanelists = [{ backend = \"pi\", name = \"a\\u001b[2Jb\" }]\n", "control characters"},
 		"relative command":   {"[backends.pi]\ncommand = \"node_modules/.bin/pi\"\n", "use a command name on PATH or an absolute path"},
 	} {
 		path := filepath.Join(t.TempDir(), "config.toml")
@@ -338,5 +346,11 @@ func TestNoConfigWithoutAbsoluteHome(t *testing.T) {
 		if cfg.Backends["pi"].Command != "" {
 			t.Errorf("HOME=%q: a config in the current directory was loaded", home)
 		}
+	}
+}
+
+func TestParseSpecRejectsControlCharacters(t *testing.T) {
+	if _, err := ParseSpec("pi:x\n## Panel key"); err == nil {
+		t.Error("a spec with a newline should be rejected")
 	}
 }

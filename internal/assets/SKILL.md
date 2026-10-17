@@ -144,8 +144,8 @@ it is signed in and find the models it can use:
 
 | backend | signed in? | models |
 |---|---|---|
-| `claude` (Claude Code) | `claude auth status`: `loggedIn`, and `authMethod` shows whether it uses a subscription or a metered API key. `so doctor` also warns if `ANTHROPIC_API_KEY` or a Codex API key is set in the environment, which panelists inherit | The aliases listed under `--model` in `claude --help`, such as `opus` (strongest) and `sonnet` (faster). Aliases always point to the latest model, so prefer them to pinned IDs. |
-| `codex` (Codex CLI) | `codex login status` | `codex debug models` prints the catalog as JSON. Use entries with `"visibility": "list"`. Each entry lists its `supported_reasoning_levels`. Panelists run without `~/.codex/config.toml`, so its `model` is not used: always set a Codex `model`. |
+| `claude` (Claude Code) | `claude auth status`: `loggedIn`, and `authMethod` shows whether it uses a subscription or a metered API key. `so doctor` also warns if `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` is set in the environment, which panelists inherit | The aliases listed under `--model` in `claude --help`, such as `opus` (strongest) and `sonnet` (faster). Aliases always point to the latest model, so prefer them to pinned IDs. |
+| `codex` (Codex CLI) | `codex login status`. `so doctor` warns if `CODEX_API_KEY` or `OPENAI_API_KEY` is set, which would bill the API account | `codex debug models` prints the catalog as JSON. Use entries with `"visibility": "list"`. Each entry lists its `supported_reasoning_levels`. Panelists run without `~/.codex/config.toml`, so its `model` is not used: always set a Codex `model`. |
 | `pi` | `pi --list-models` lists models only for providers it has credentials for. `pi auth check --provider <name>` checks one provider. | Use the `provider/model` IDs from `pi --list-models`, such as `ollama/glm-5.3:cloud`. pi's own default is `defaultProvider`/`defaultModel` in `~/.pi/agent/settings.json`. If `so doctor` warns about the developer role for an Ollama provider, tell the user: without that one-line fix in `~/.pi/agent/models.json`, some Ollama models ignore `so`'s instructions. |
 
 If a CLI is installed but not signed in, tell the user rather than fixing it yourself.
@@ -209,8 +209,8 @@ chair = { backend = "claude", model = "opus", effort = "high" }
    commented starter file. Add the approved profiles to it. If the config already exists, edit it
    and keep what the user already has.
 3. Run `so profiles` to validate the config, then `so doctor --ping` to check every configured
-   model end to end, and `so doctor --canary` to check that no model can read files outside its
-   scratch folder without repo access.
+   model end to end, and `so doctor --canary` to check that no model reads a file outside its
+   folder, through its tools or through an `@` mention (evidence from one run, not proof).
 4. Tell the user what you set up, and that they can change it later by asking you or by editing the
    config file.
 

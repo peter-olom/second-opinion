@@ -103,7 +103,6 @@ var codexNetworkFeatures = map[string]bool{
 	"system_proxy_fallback":        true,
 	"content_item_kinds":           true,
 	"compaction_image_budget":      true,
-	"auth_elicitation":             true,
 }
 
 // codexShellFeatures give the model read-only commands, which repo access

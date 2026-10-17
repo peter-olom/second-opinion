@@ -983,3 +983,21 @@ func gitRunsDriver(t *testing.T, dir, marker string, args ...string) {
 	}
 	os.Remove(marker)
 }
+
+func TestRootRefusesAWorkTreeElsewhere(t *testing.T) {
+	other := newRepo(t)
+	dir := t.TempDir()
+	run(t, dir, "init", "-q")
+	run(t, dir, "config", "core.worktree", other)
+	if root, err := Root(context.Background(), dir); err == nil {
+		t.Errorf("Root = %q; a core.worktree outside the folder should be refused", root)
+	}
+	if _, err := Diff(context.Background(), dir, "HEAD", ""); err == nil {
+		t.Error("Diff should refuse it too")
+	}
+	sub := filepath.Join(other, "pkg")
+	os.MkdirAll(sub, 0o755)
+	if _, err := Root(context.Background(), sub); err != nil {
+		t.Errorf("a subfolder of a normal repository: %v", err)
+	}
+}

@@ -82,7 +82,8 @@ In markdown output, each answer (and each error) is a blockquote: every line sta
 Nothing inside a blockquote can be a top-level heading, and Markdown closes anything left open in it
 (an unclosed code fence, say) where the quote ends, so a model's text can't pass for one of `so`'s
 sections (`## Panel synthesis`, `## Panel key`) or hide the ones after it, in the text or in a
-Markdown renderer. HTML comments (`<!--`) outside fenced code are escaped too; other raw HTML is left as is,
+Markdown renderer. HTML comment openings (`<!--`) are escaped everywhere, code included, where they show as
+`&lt;!--`; other raw HTML is left as is,
 so a viewer that renders raw HTML without sanitizing it could still be misled. Answer headings are
 also moved two levels down to read as subsections, and terminal control characters are removed. Use
 `--format json` when a program reads the result.
@@ -254,7 +255,8 @@ repo access (codex's shell, pi's `read`) can still read the environment of `so` 
 one-token budget), since Codex has no switch to turn them off. pi runs with `--offline`, so it makes
 no startup network requests, such as package installs. If `ANTHROPIC_API_KEY` or `CODEX_API_KEY`/`OPENAI_API_KEY` is set,
 that CLI may bill the API account instead of your subscription; `so doctor` warns about it, and a
-backend's config `env` can clear it (`env = { ANTHROPIC_API_KEY = "" }`).
+backend's config `env` can clear it (`env = { ANTHROPIC_API_KEY = "" }`). pi has no such switch: it bills whatever provider and key its own settings
+and environment select.
 
 Claude Code reads any file named in an `@path` mention in its prompt, in code blocks too, whatever
 its tools allow, and even outside the repository. In testing, an attached file mentioning
@@ -262,7 +264,8 @@ its tools allow, and even outside the repository. In testing, an attached file m
 space before every `@` that isn't part of an email-like word (before, not after: after it, the
 mention would name a relative path that a repository could provide, which was expanded in testing) in what it sends claude (panelists and
 chair), tells the model so, and without repo access also denies claude every read. Codex and pi
-don't expand mentions in a prompt on stdin.
+don't expand mentions in a prompt on stdin, and claude didn't expand one in its system prompt
+(where custom mode instructions go) in testing.
 
 A `[backends.*] command` must be a name on `PATH` or an absolute path: a relative path would
 resolve inside the reviewed repository.
@@ -270,10 +273,11 @@ resolve inside the reviewed repository.
 These flags assume no overriding `args` in a `[backends.*]` section of your config: those are
 appended after `so`'s own flags, so they can undo the lockdown.
 
-`so doctor --canary` tests this on your machine. It plants a file outside each model's scratch
-folder and asks the model, configured exactly as a panelist without repo access but explicitly
-invited to use any tool it has, to read it. A ✓ means it did not read the file on that run, which is
-evidence rather than proof. In testing, a Codex panelist with this lockdown didn't read the file in
+`so doctor --canary` tests this on your machine. It plants a file outside each model's folder and
+runs three checks per model, each configured exactly as a panelist: one asks it to read the file
+with any tool it has (without repo access), and two name the file in an `@` mention, the way
+claude would expand it, without and with repo access. A ✓ means it did not read the file on that
+run, which is evidence rather than proof. In testing, a Codex panelist with this lockdown didn't read the file in
 10 of 10 runs, while the same check caught an unlocked Codex every time.
 
 `so` sets `SECOND_OPINION_DEPTH=1` for every panelist (including the commands Codex runs) and refuses to start a panel, ping models, or

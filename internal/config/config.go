@@ -101,6 +101,9 @@ func ParseSpec(spec string) (Panelist, error) {
 	if strings.HasPrefix(p.Model, "-") {
 		return p, fmt.Errorf("invalid model %q in %q: a model can't start with -", p.Model, spec)
 	}
+	if hasControl(spec) {
+		return p, fmt.Errorf("invalid panelist %q: control characters", spec)
+	}
 	return p, nil
 }
 
@@ -316,6 +319,9 @@ func (c *Config) validate() error {
 		for _, x := range append([]Panelist{pl}, pl.Fallback...) {
 			// Model and provider become CLI arguments of their own; one that
 			// starts with - would read as a flag.
+			if hasControl(x.Name + x.Backend + x.Model + x.Provider + x.Effort) {
+				return fmt.Errorf("%s: control characters in a panelist's name, backend, model, provider, or effort", where)
+			}
 			if strings.HasPrefix(x.Model, "-") || strings.HasPrefix(x.Provider, "-") {
 				return fmt.Errorf("%s: model and provider can't start with - (%q, %q)", where, x.Model, x.Provider)
 			}
@@ -485,4 +491,10 @@ func tomlValue(v string) string {
 	}
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// hasControl reports whether s holds a control character, which would
+// garble the labels and specs so prints.
+func hasControl(s string) bool {
+	return strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) })
 }

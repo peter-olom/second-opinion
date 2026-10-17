@@ -255,8 +255,17 @@ func TestHTMLCommentsCannotHideLaterSections(t *testing.T) {
 	if strings.Contains(out, "note <!--") || !strings.Contains(out, "note &lt;!-- start") {
 		t.Errorf("an HTML comment outside code should be escaped:\n%s", out)
 	}
-	if !strings.Contains(out, "> <!-- kept in code -->") {
-		t.Errorf("code should be left alone:\n%s", out)
+	if strings.Contains(out, "<!-- kept in code") {
+		t.Errorf("comments are escaped everywhere, code included:\n%s", out)
+	}
+	for _, body := range []string{"- item\n  ```\n<!--\n", "<details>\n```\n<!--\n"} {
+		r := anonymousResult()
+		r.Opinions[0].Output = body
+		var b strings.Builder
+		Markdown(&b, r)
+		if strings.Contains(b.String(), "<!--") {
+			t.Errorf("body %q: a raw comment opening survived:\n%s", body, b.String())
+		}
 	}
 	if q := Quote("<!-- x"); q != "> &lt;!-- x\n" {
 		t.Errorf("Quote = %q", q)
