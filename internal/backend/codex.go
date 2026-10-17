@@ -159,7 +159,7 @@ func codexFeatures(ctx context.Context, o Options) ([]string, error) {
 	}
 	// A private folder, not the shared temp directory, where another user
 	// could plant a .codex folder.
-	scratch, err := os.MkdirTemp("", "so-codex-")
+	scratch, err := os.MkdirTemp(TempDir(), "so-codex-")
 	if err != nil {
 		return nil, err
 	}

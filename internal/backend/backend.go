@@ -23,6 +23,21 @@ import (
 	"github.com/peter-olom/second-opinion/internal/procgroup"
 )
 
+// TempDir is the folder scratch folders go in: the system temp folder as
+// an absolute, physical path. A relative TMPDIR would otherwise give
+// relative scratch paths, which a CLI run in another folder resolves
+// somewhere else (pi then takes a missing prompt file name as the prompt).
+func TempDir() string {
+	d, err := filepath.Abs(os.TempDir())
+	if err != nil {
+		return os.TempDir()
+	}
+	if r, err := filepath.EvalSymlinks(d); err == nil {
+		return r
+	}
+	return d
+}
+
 // ErrTimeout is returned when a CLI exceeds its deadline.
 var ErrTimeout = errors.New("timed out")
 

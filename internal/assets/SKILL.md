@@ -95,6 +95,11 @@ when you report the result.
 
 ## Practicalities
 
+- `so` runs the model CLIs, which call their providers over the network, and records runs under
+  `~/.local/state/second-opinion`. In a sandboxed shell (no network, or no writes outside the
+  workspace) every panelist fails, with kind `other` or `auth`, and nothing is recorded: ask the
+  user to let `so` run outside the sandbox.
+
 - A call takes from about 10 seconds to several minutes. High-effort panels with repository
   access are the slowest, and audits slower still. Each model call gets the full `timeout`
   (15 minutes by default), and the chair runs after the panel, so give the command at least

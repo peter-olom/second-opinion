@@ -252,7 +252,7 @@ func (r *Runner) call(ctx context.Context, pl config.Panelist, system, prompt, w
 	if err != nil {
 		return "", err
 	}
-	dir, err := os.MkdirTemp("", "second-opinion-")
+	dir, err := os.MkdirTemp(backend.TempDir(), "second-opinion-")
 	if err != nil {
 		return "", err
 	}

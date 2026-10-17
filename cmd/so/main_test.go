@@ -545,6 +545,11 @@ func TestWithheldModeRepoAccessIsNoted(t *testing.T) {
 }
 
 func TestIgnoredRoutingIsReported(t *testing.T) {
+	// Keys this test uses mustn't come from the developer's environment.
+	for _, k := range []string{"CLAUDE_CODE_USE_BEDROCK", "DISABLE_TELEMETRY", "HTTPS_PROXY"} {
+		t.Setenv(k, "")
+		os.Unsetenv(k)
+	}
 	claudeDir, codexDir := t.TempDir(), t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
 	t.Setenv("CODEX_HOME", codexDir)
@@ -555,6 +560,12 @@ func TestIgnoredRoutingIsReported(t *testing.T) {
 	if got := ignoredRouting("claude", nil); len(got) != 1 || !strings.Contains(got[0], "env.CLAUDE_CODE_USE_BEDROCK, env.DISABLE_TELEMETRY, env.HTTPS_PROXY") {
 		t.Errorf("claude = %q", got)
 	}
+	// A key so inherits (run from inside Claude Code) reaches panelists.
+	t.Setenv("HTTPS_PROXY", "http://p")
+	if got := ignoredRouting("claude", nil); len(got) != 1 || strings.Contains(got[0], "HTTPS_PROXY") {
+		t.Errorf("an inherited key should not be reported as dropped: %q", got)
+	}
+	os.Unsetenv("HTTPS_PROXY")
 	// What so's backend env sets is not reported.
 	if got := ignoredRouting("claude", map[string]string{"CLAUDE_CODE_USE_BEDROCK": "1", "DISABLE_TELEMETRY": "1", "HTTPS_PROXY": "x"}); got != nil {
 		t.Errorf("covered keys should not warn: %q", got)
@@ -1242,4 +1253,67 @@ func TestDoctorProfileRefusedInsidePanelist(t *testing.T) {
 			t.Errorf("exit code = %d, want 3 inside a panelist", code)
 		}
 	})
+}
+
+func TestBackendHOMEOverrideIsProtected(t *testing.T) {
+	unsetEnv(t, backend.EnvGuard)
+	repo := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"commit", "-q", "--allow-empty", "-m", "i"}} {
+		cmd := exec.Command("git", append([]string{"-C", repo, "-c", "user.email=a@b", "-c", "user.name=a"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	// pi is given a HOME inside the repository; its credentials live under it.
+	acct := filepath.Join(repo, "acct")
+	os.MkdirAll(filepath.Join(acct, ".pi", "agent"), 0o700)
+	os.WriteFile(filepath.Join(acct, ".pi", "agent", "auth.json"), []byte(`{"token":"AUTH-SENTINEL"}`), 0o600)
+	os.WriteFile(filepath.Join(repo, "a.go"), []byte("package a // ordinary\n"), 0o644)
+	fakeDir := t.TempDir()
+	fake := filepath.Join(fakeDir, "pi")
+	got := filepath.Join(fakeDir, "got")
+	os.WriteFile(fake, []byte("#!/bin/sh\ncat > "+got+"\necho ok\n"), 0o755)
+	cfg := filepath.Join(fakeDir, "config.toml")
+	os.WriteFile(cfg, []byte(stubOtherBackends+"[backends.pi]\ncommand = \""+fake+"\"\nenv = { HOME = \""+acct+"\" }\n"), 0o600)
+	t.Chdir(repo)
+	captureStderr(t, func() {
+		captureStdout(t, func() {
+			run(context.Background(), []string{"ask", "--config", cfg, "--diff", "--no-repo", "-w", "pi:x", "q"})
+		})
+	})
+	prompt, _ := os.ReadFile(got)
+	if strings.Contains(string(prompt), "AUTH-SENTINEL") || !strings.Contains(string(prompt), "ordinary") {
+		t.Errorf("credentials under the backend's HOME went out with the diff:\n%s", prompt)
+	}
+}
+
+func TestCanaryNegativeControls(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script")
+	}
+	for name, tc := range map[string]struct{ script, want string }{
+		// A claude that ignores the absolute deny rule and reads the file.
+		"absolute deny": {`cat >/dev/null
+content=$(cat "[x] (y) {z}/state/tok.txt" 2>/dev/null)
+printf '{"type":"result","subtype":"success","result":"%s"}\n' "$content"`, "✗ claude:x (absolute deny, repo access): READ A PATH ITS RULES DENY"},
+		// A claude that expands a mention even after the marker before @.
+		"defused mention": {`prompt=$(cat)
+f=$(printf '%s' "$prompt" | grep -oE '@/[^[:space:]]+' | head -1 | sed 's/^@//')
+content=""
+[ -n "$f" ] && [ -f "$f" ] && content=$(cat "$f")
+printf '{"type":"result","subtype":"success","result":"%s"}\n' "$content"`, "✗ claude:x (mention): READ A FILE OUTSIDE ITS FOLDER"},
+	} {
+		dir := t.TempDir()
+		fake := filepath.Join(dir, "claude")
+		os.WriteFile(fake, []byte("#!/bin/sh\n"+tc.script+"\n"), 0o755)
+		cfgPath := filepath.Join(dir, "config.toml")
+		os.WriteFile(cfgPath, []byte("[backends.claude]\ncommand = \""+fake+"\"\n[backends.codex]\ncommand = \"/nonexistent/c\"\n[backends.pi]\ncommand = \"/nonexistent/p\"\n"), 0o644)
+		var code int
+		out := captureStdout(t, func() {
+			code = run(context.Background(), []string{"doctor", "--canary", "--config", cfgPath, "-w", "claude:x"})
+		})
+		if code != 1 || !strings.Contains(out, tc.want) {
+			t.Errorf("%s: exit %d; the canary should catch it (%s):\n%s", name, code, tc.want, out)
+		}
+	}
 }

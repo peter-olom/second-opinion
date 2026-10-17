@@ -664,11 +664,22 @@ func TestGlobEscape(t *testing.T) {
 func TestCodexDiscoveryWaitersCanLeave(t *testing.T) {
 	codexFeatureList = featureCache{}
 	t.Cleanup(func() { codexFeatureList = featureCache{} })
-	cli := script(t, "sleep 10\n") // a hung `codex features list`
+	started := filepath.Join(t.TempDir(), "started")
+	cli := script(t, "touch "+started+"\nsleep 10\n") // a hung `codex features list`
 	first, cancelFirst := context.WithCancel(context.Background())
-	defer cancelFirst()
-	go codexFeatures(first, Options{Command: cli})
-	time.Sleep(200 * time.Millisecond) // let it take the lock
+	done := make(chan struct{})
+	go func() { codexFeatures(first, Options{Command: cli}); close(done) }()
+	defer func() { cancelFirst(); <-done }()
+	// Wait until the first caller is inside the listing, holding the lock.
+	for i := 0; ; i++ {
+		if _, err := os.Stat(started); err == nil {
+			break
+		}
+		if i > 200 {
+			t.Fatal("the first listing never started")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	start := time.Now()
@@ -678,5 +689,16 @@ func TestCodexDiscoveryWaitersCanLeave(t *testing.T) {
 	}
 	if !errors.Is(err, ErrTimeout) {
 		t.Errorf("err = %v, want ErrTimeout", err)
+	}
+}
+
+func TestRulePathForms(t *testing.T) {
+	for in, want := range map[string]string{
+		`C:\Users\a\state`: "/c/Users/a/state",
+		"/home/a/state":    "/home/a/state",
+	} {
+		if got := rulePath(in); got != want {
+			t.Errorf("rulePath(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

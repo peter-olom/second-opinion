@@ -349,9 +349,6 @@ func cmdAsk(ctx context.Context, args []string) int {
 			fmt.Fprintln(os.Stderr, "so: could not record run:", err)
 			res.Run = ""
 		}
-	} else {
-		// Recording is off, but runs recorded before that still expire.
-		history.Prune(history.Dir(), time.Now().Add(-cfg.Retention()))
 	}
 	if res.Anonymous && !*reveal {
 		res.Redact()
@@ -522,6 +519,15 @@ func privatePaths(cfg *config.Config) []gitctx.Exclude {
 		if v := cfg.Backends[h.backend].Env[h.env]; v != "" {
 			paths = append(paths, gitctx.Exclude{Path: v, Reason: h.backend + "'s home (" + h.env + "), with its credentials"})
 		}
+		// A backend given a HOME (or USERPROFILE) of its own keeps its
+		// default home under that.
+		for _, k := range []string{"HOME", "USERPROFILE"} {
+			if home := homePath(cfg.Backends[h.backend].Env[k]); home != "" {
+				for _, sub := range []string{".claude", ".claude.json", ".codex", filepath.Join(".pi", "agent")} {
+					paths = append(paths, gitctx.Exclude{Path: filepath.Join(home, sub), Reason: h.backend + "'s home (under its " + k + "), with its credentials"})
+				}
+			}
+		}
 	}
 	return paths
 }
@@ -535,6 +541,14 @@ var homeVars = []struct{ backend, env string }{{"claude", "CLAUDE_CONFIG_DIR"}, 
 // (resolved from where so started) and another to the CLI (run in the
 // repository or a scratch folder), so so would protect the wrong one.
 func resolveHomes(cfg *config.Config) {
+	for name, bc := range cfg.Backends {
+		for _, k := range []string{"HOME", "USERPROFILE"} {
+			if v, ok := bc.Env[k]; ok && v != "" {
+				bc.Env[k] = homePath(v)
+			}
+		}
+		cfg.Backends[name] = bc
+	}
 	for _, h := range homeVars {
 		bc := cfg.Backends[h.backend]
 		v, ok := bc.Env[h.env]
@@ -1114,6 +1128,9 @@ func ignoredRouting(name string, backendEnv map[string]string) []string {
 		if v = homePath(v); v != "" {
 			return v
 		}
+		if h := homePath(backendEnv["HOME"]); h != "" {
+			return filepath.Join(h, def) // the backend's own HOME
+		}
 		return filepath.Join(home, def)
 	}
 	var found []string
@@ -1135,8 +1152,12 @@ func ignoredRouting(name string, backendEnv map[string]string) []string {
 		// Every env entry, not only routing: telemetry opt-outs, proxies
 		// and CA certificates set there are dropped too, unless so's own
 		// backend env sets them.
+		// A key so's own environment already has (so run from inside Claude
+		// Code, which exports its settings env) reaches panelists anyway.
 		for _, k := range slices.Sorted(maps.Keys(s.Env)) {
-			if _, ok := backendEnv[k]; !ok {
+			_, inBackend := backendEnv[k]
+			_, inherited := os.LookupEnv(k)
+			if !inBackend && !inherited {
 				found = append(found, "env."+k)
 			}
 		}
@@ -1235,7 +1256,7 @@ func boundedOutput(ctx context.Context, name string, args ...string) ([]byte, er
 	// A private folder: not the caller's repository, which a CLI could act
 	// on at startup, nor the shared temp directory, where others could plant
 	// files.
-	scratch, err := os.MkdirTemp("", "so-probe-")
+	scratch, err := os.MkdirTemp(backend.TempDir(), "so-probe-")
 	if err != nil {
 		return nil, err
 	}
@@ -1271,7 +1292,7 @@ func (w *cappedWriter) Write(p []byte) (int, error) {
 // to the panelist prompt's "do not use tools". A model that does not read the
 // file this time may still be able to; the check is evidence, not proof.
 func runCanary(ctx context.Context, cfg *config.Config, targets []config.Panelist) int {
-	dir, err := os.MkdirTemp("", "so-canary-")
+	dir, err := os.MkdirTemp(backend.TempDir(), "so-canary-")
 	if err != nil {
 		return fail(err)
 	}
@@ -1281,7 +1302,7 @@ func runCanary(ctx context.Context, cfg *config.Config, targets []config.Panelis
 	if err := os.WriteFile(file, []byte(token+"\n"), 0o600); err != nil {
 		return fail(err)
 	}
-	workspace, err := os.MkdirTemp("", "so-canary-repo-")
+	workspace, err := os.MkdirTemp(backend.TempDir(), "so-canary-repo-")
 	if err != nil {
 		return fail(err)
 	}
@@ -1342,7 +1363,7 @@ func runCanary(ctx context.Context, cfg *config.Config, targets []config.Panelis
 	// under a folder name with glob-like characters. In a workspace of its
 	// own: the other checks don't deny this file, and a search there would
 	// find it.
-	if ws2, err := os.MkdirTemp("", "so-canary-abs-"); err == nil {
+	if ws2, err := os.MkdirTemp(backend.TempDir(), "so-canary-abs-"); err == nil {
 		defer os.RemoveAll(ws2)
 		odd := filepath.Join(ws2, "[x] (y) {z}", "state")
 		if os.MkdirAll(odd, 0o700) == nil && os.WriteFile(filepath.Join(odd, "tok.txt"), []byte(token+"\n"), 0o600) == nil {

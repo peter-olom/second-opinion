@@ -53,7 +53,7 @@ func (c claude) Run(ctx context.Context, req Request) (string, error) {
 		// escaped, or the rule stops matching (verified live: an unescaped
 		// "[acme]" folder let claude read the path).
 		for _, p := range req.Deny {
-			p = globEscape(filepath.ToSlash(p))
+			p = globEscape(rulePath(p))
 			deny = append(deny, "Read(/"+p+")", "Read(/"+p+"/**)")
 		}
 		rules, _ := json.Marshal(map[string]any{"permissions": map[string]any{"deny": deny}})
@@ -181,4 +181,13 @@ func globEscape(p string) string {
 		b.WriteRune(r)
 	}
 	return b.String()
+}
+
+// rulePath writes an absolute path the way Claude Code's rules match it:
+// slash-separated, and a Windows drive as its POSIX form (C:\x is /c/x).
+func rulePath(p string) string {
+	if len(p) >= 2 && p[1] == ':' && (p[0] >= 'A' && p[0] <= 'Z' || p[0] >= 'a' && p[0] <= 'z') {
+		return "/" + strings.ToLower(p[:1]) + strings.ReplaceAll(p[2:], `\`, "/")
+	}
+	return filepath.ToSlash(p)
 }

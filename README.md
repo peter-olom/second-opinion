@@ -223,7 +223,8 @@ The flags that keep your user settings out also drop any provider routing in the
 `ANTHROPIC_BASE_URL` or `apiKeyHelper` in `~/.claude/settings.json`, and `model_provider` in
 `~/.codex/config.toml`. A panelist then uses the CLI's own login, which may be another account or
 provider than you meant. Every other `env` entry there is dropped too, telemetry opt-outs, proxy
-and CA settings included. `so doctor` warns when those settings are present; put what panelists
+and CA settings included, unless `so` itself already has it in its environment (run from inside
+Claude Code, which exports its settings `env`, panelists inherit it). `so doctor` warns when those settings are present; put what panelists
 need in the backend's `env` in `so`'s config.
 
 A reviewed repository's files can still try to steer a panelist that reads them, as any untrusted
@@ -298,13 +299,14 @@ under a folder named `[x] (y) {z}`, and asks for it. At most four checks run at 
 run, which is evidence rather than proof. In testing, a Codex panelist with this lockdown didn't read the file in
 10 of 10 runs, while the same check caught an unlocked Codex every time.
 
-If your run history (`$XDG_STATE_HOME`), `so`'s config, or a backend's home (`~/.claude`,
-`~/.claude.json`, `~/.codex`, `~/.pi/agent`, or wherever `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or
-`PI_CODING_AGENT_DIR` moves it; sign-in credentials and transcripts) is inside a repository,
-`--diff` never attaches it, even deleted, and claude panelists with repo access are denied it. `so`
-warns when the panel's codex or pi seats could still read it. A relative or `~` home is resolved
-once and passed to the CLI as that absolute path, so what `so` protects is what the CLI uses.
-claude's deny rules are written to a private file in the scratch folder and passed by path.
+If your run history (`$XDG_STATE_HOME`), `so`'s config, or a backend's home (sign-in credentials
+and transcripts) is inside a repository, `--diff` never attaches it, even deleted, and claude
+panelists with repo access are denied it. A backend's home is `~/.claude`, `~/.claude.json`,
+`~/.codex` or `~/.pi/agent`, the same under a `HOME` set in that backend's `env`, or wherever
+`CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `PI_CODING_AGENT_DIR` moves it. `so` warns when the panel's
+codex or pi seats could still read it. A relative or `~` home is resolved once and passed to the
+CLI as that absolute path, so what `so` protects is what the CLI uses. claude's deny rules are
+written to a private file in the scratch folder and passed by path.
 
 `--repo` refuses to share a repository's `.git` folder or a bare repository, run from inside one.
 

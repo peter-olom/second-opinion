@@ -402,3 +402,21 @@ func TestClaudeChairGetsDefusedMentions(t *testing.T) {
 		t.Errorf("the claude chair got a panelist's mention undefused:\n%s", data)
 	}
 }
+
+func TestRelativeTMPDIRStillGivesAbsoluteScratch(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("TMPDIR", ".")
+	argsFile := filepath.Join(dir, "args")
+	fake := fakeCLI(t, "printf '%s\\n' \"$@\" > "+argsFile+"; cat >/dev/null; echo ok")
+	runner := &Runner{Backends: map[string]config.Backend{"pi": {Command: fake}}}
+	if o := runner.Ask(context.Background(), config.Panelist{Backend: "pi"}, "x", "sys", "q", ""); !o.OK() {
+		t.Fatalf("ask failed: %s", o.Error)
+	}
+	data, _ := os.ReadFile(argsFile)
+	args := strings.Split(string(data), "\n")
+	i := slices.Index(args, "--append-system-prompt")
+	if i < 0 || !filepath.IsAbs(args[i+1]) {
+		t.Errorf("with TMPDIR=. the scratch prompt file should still be absolute: %q", args)
+	}
+}
