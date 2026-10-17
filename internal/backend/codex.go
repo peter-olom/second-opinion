@@ -113,6 +113,9 @@ var codexShellFeatures = map[string]bool{"shell_tool": true, "unified_exec": tru
 type featureCache struct {
 	mu    sync.Mutex
 	names []string
+	// busy is held while one caller lists the features; others wait on it
+	// or on their own context, whichever ends first.
+	busy chan struct{}
 }
 
 var codexFeatureList featureCache
@@ -125,9 +128,27 @@ var codexFeatureList featureCache
 // is no alternative, since Codex rejects a feature it does not know.
 func codexFeatures(ctx context.Context, o Options) ([]string, error) {
 	codexFeatureList.mu.Lock()
-	defer codexFeatureList.mu.Unlock()
-	if codexFeatureList.names != nil {
-		return codexFeatureList.names, nil
+	if codexFeatureList.busy == nil {
+		codexFeatureList.busy = make(chan struct{}, 1)
+	}
+	busy := codexFeatureList.busy
+	codexFeatureList.mu.Unlock()
+	select {
+	case busy <- struct{}{}:
+		defer func() { <-busy }()
+	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, fmt.Errorf("codex: listing its features: %w", ErrTimeout)
+		}
+		return nil, fmt.Errorf("codex: listing its features: %w", ctx.Err())
+	}
+	// mu guards only the cache, never the listing, so a waiter can always
+	// reach the select above.
+	codexFeatureList.mu.Lock()
+	cached := codexFeatureList.names
+	codexFeatureList.mu.Unlock()
+	if cached != nil {
+		return cached, nil
 	}
 	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -160,7 +181,9 @@ func codexFeatures(ctx context.Context, o Options) ([]string, error) {
 	if len(names) == 0 {
 		return nil, errors.New("codex: `codex features list` returned nothing so could parse; cannot disable its tools, so not running it")
 	}
+	codexFeatureList.mu.Lock()
 	codexFeatureList.names = names
+	codexFeatureList.mu.Unlock()
 	return names, nil
 }
 

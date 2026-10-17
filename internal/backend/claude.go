@@ -46,9 +46,12 @@ func (c claude) Run(ctx context.Context, req Request) (string, error) {
 		for _, p := range harness.Names {
 			deny = append(deny, "Read(./"+p+")", "Read(./"+p+"/**)", "Read(**/"+p+")", "Read(**/"+p+"/**)")
 		}
-		// Absolute paths take a leading "//" in Claude Code's rules.
+		// Absolute paths take a leading "//" in Claude Code's rules, which
+		// are gitignore-style globs: a "[" or "*" in a folder name has to be
+		// escaped, or the rule stops matching (verified live: an unescaped
+		// "[acme]" folder let claude read the path).
 		for _, p := range req.Deny {
-			p = filepath.ToSlash(p)
+			p = globEscape(filepath.ToSlash(p))
 			deny = append(deny, "Read(/"+p+")", "Read(/"+p+"/**)")
 		}
 		rules, _ := json.Marshal(map[string]any{"permissions": map[string]any{"deny": deny}})
@@ -154,3 +157,17 @@ func asciiAlnum(r rune) bool {
 func restoreMentions(s string) string { return strings.ReplaceAll(s, "\u200b@", "@") }
 
 const mentionNote = "\n\n(so inserted an invisible zero-width space before each @ in the request that doesn't follow an ASCII letter or digit, to stop file mentions from being expanded. Read past it as if it weren't there, and don't mention it.)"
+
+// globEscape escapes the characters gitignore-style patterns treat as
+// special, so a path matches only itself.
+func globEscape(p string) string {
+	var b strings.Builder
+	for _, r := range p {
+		switch r {
+		case '[', ']', '*', '?', '\\':
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}

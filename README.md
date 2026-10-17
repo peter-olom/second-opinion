@@ -296,9 +296,12 @@ differently-cased `.SpecStory/`, which claude's rules deny, and asks for those. 
 run, which is evidence rather than proof. In testing, a Codex panelist with this lockdown didn't read the file in
 10 of 10 runs, while the same check caught an unlocked Codex every time.
 
-If your run history (`$XDG_STATE_HOME`) or `so`'s config is inside a repository, `--diff` never
-attaches them, and `so` warns when repo access would let panelists read them (earlier runs show
-which model was which; the config may set credentials in `env`).
+If your run history (`$XDG_STATE_HOME`), `so`'s config, or a backend's home moved with
+`CODEX_HOME`, `CLAUDE_CONFIG_DIR` or `PI_CODING_AGENT_DIR` (sign-in credentials) is inside a
+repository, `--diff` never attaches it, even deleted, and claude panelists with repo access are
+denied it. `so` warns when the panel's codex or pi seats could still read it.
+
+`--repo` refuses to share a repository's `.git` folder or a bare repository, run from inside one.
 
 `so` sets `SECOND_OPINION_DEPTH=1` for every panelist (including the commands Codex runs) and refuses to start a panel, ping models, or
 uninstall when that variable is present. This stops accidental recursion; it is cooperative, so a

@@ -253,10 +253,9 @@ func cmdAsk(ctx context.Context, args []string) int {
 			// would attach. Either explicit choice confirms it.
 			return fail(errors.New("--diff: this repository is inside a dot-folder in your home directory, where untracked files are often tokens or configs; to collect from it anyway, add --no-repo (the diff only) or --repo (the diff, and read access for the panel)"))
 		}
-		// so's own files never go out with the diff, wherever they live.
-		gc, err := gitctx.Diff(ctx, ".", firstNonEmpty(*base, "HEAD"), nonce,
-			gitctx.Exclude{Path: history.StateDir(), Reason: "so's run history"},
-			gitctx.Exclude{Path: cfg.Path, Reason: "so's config"})
+		// so's own files, and the backends' homes (credentials), never go
+		// out with the diff, wherever they live.
+		gc, err := gitctx.Diff(ctx, ".", firstNonEmpty(*base, "HEAD"), nonce, privatePaths(cfg)...)
 		if err != nil {
 			return failCtx(ctx, err)
 		}
@@ -269,16 +268,22 @@ func cmdAsk(ctx context.Context, args []string) int {
 	if p.Workspace, err = resolveWorkspace(ctx, *repo, *noRepo, p.Mode.Repo); err != nil {
 		return failCtx(ctx, err)
 	}
+	// What the panel's codex and pi seats could read anyway: only claude can
+	// be denied paths, so the warnings name the others, if any are used.
+	others := otherBackends(p)
 	var deny []string
-	if p.Workspace != "" && contains(p.Workspace, history.StateDir()) {
-		deny = append(deny, absPath(history.StateDir()))
-		fmt.Fprintln(os.Stderr, "so: the run history is inside the repository shared with the panel; claude panelists are denied it, but codex and pi panelists can read earlier runs, including which model was which. Move XDG_STATE_HOME, or use --no-repo (--diff leaves the history out either way)")
-	}
-	if p.Workspace != "" && cfg.Path != "" && contains(p.Workspace, cfg.Path) {
-		deny = append(deny, absPath(cfg.Path))
-		fmt.Fprintln(os.Stderr, "so: so's config is inside the repository shared with the panel; claude panelists are denied it, but codex and pi panelists can read it (and any env it sets). Move it, or use --no-repo (--diff leaves it out either way)")
-	}
 	if p.Workspace != "" {
+		for _, ex := range privatePaths(cfg) {
+			if ex.Path == "" || !contains(p.Workspace, ex.Path) {
+				continue
+			}
+			deny = append(deny, absPath(ex.Path))
+			if others != "" {
+				fmt.Fprintf(os.Stderr, "so: %s is inside the repository shared with the panel; claude panelists are denied it, but %s panelists can read it. Move it, or use --no-repo (--diff leaves it out either way)\n", ex.Reason, others)
+			}
+		}
+	}
+	if p.Workspace != "" && others != "" {
 		// Anywhere in the workspace, not only at its root, ignored folders,
 		// submodules and nested repositories included: a harness run in a
 		// subfolder keeps its state there.
@@ -287,7 +292,7 @@ func cmdAsk(ctx context.Context, args []string) int {
 			fmt.Fprintf(os.Stderr, "so: could not check the workspace for agent-harness state: %v\n", err)
 		}
 		for _, name := range found {
-			fmt.Fprintf(os.Stderr, "so: %s holds agent-harness state; claude panelists are denied it, but codex and pi panelists with repo access can read it (use --no-repo to prevent that)\n", render.Line(name))
+			fmt.Fprintf(os.Stderr, "so: %s holds agent-harness state; claude panelists are denied it, but %s panelists with repo access can read it (use --no-repo to prevent that)\n", render.Line(name), others)
 		}
 		if err == nil && !complete {
 			fmt.Fprintln(os.Stderr, "so: there may be more agent-harness state in the workspace; the check stopped early")
@@ -465,6 +470,9 @@ func resolveWorkspace(ctx context.Context, explicit, disabled bool, modeDefault 
 		if containsHome(cwd) {
 			return "", errors.New("--repo would give the panel your whole home directory; run so from a project folder instead")
 		}
+		if gitctx.InGitDir(ctx, cwd) {
+			return "", errors.New("--repo: this folder is a repository's .git (or a bare repository), whose config and history aren't for the panel; run so from the work tree")
+		}
 		return cwd, nil
 	}
 	if errors.Is(err, gitctx.ErrForeignWorkTree) {
@@ -473,6 +481,51 @@ func resolveWorkspace(ctx context.Context, explicit, disabled bool, modeDefault 
 		fmt.Fprintln(os.Stderr, "so: no repo access for this mode: not inside a git repository; pass --repo to share the current folder")
 	}
 	return "", nil
+}
+
+// privatePaths are files and folders never sent with --diff, and denied to
+// claude panelists with repo access: so's run history and config, and each
+// backend's home (sign-in credentials) if it was moved into the project.
+func privatePaths(cfg *config.Config) []gitctx.Exclude {
+	paths := []gitctx.Exclude{
+		{Path: history.StateDir(), Reason: "so's run history"},
+		{Path: cfg.Path, Reason: "so's config"},
+	}
+	for _, h := range []struct{ backend, env string }{{"claude", "CLAUDE_CONFIG_DIR"}, {"codex", "CODEX_HOME"}, {"pi", "PI_CODING_AGENT_DIR"}} {
+		v, ok := cfg.Backends[h.backend].Env[h.env]
+		if !ok {
+			v = os.Getenv(h.env)
+		}
+		if filepath.IsAbs(v) {
+			paths = append(paths, gitctx.Exclude{Path: v, Reason: h.backend + "'s home (" + h.env + "), with its credentials"})
+		}
+	}
+	return paths
+}
+
+// otherBackends names the backends other than claude that the panel uses,
+// fallbacks and chair included ("codex and pi", "pi", or "").
+func otherBackends(p panel.Panel) string {
+	used := map[string]bool{}
+	add := func(pl config.Panelist) {
+		used[pl.Backend] = true
+		for _, f := range pl.Fallback {
+			used[f.Backend] = true
+		}
+	}
+	for _, pl := range p.Panelists {
+		add(pl)
+	}
+	if p.Chair != nil {
+		add(*p.Chair)
+	}
+	var names []string
+	for _, b := range []string{"codex", "pi"} {
+		if used[b] {
+			names = append(names, b)
+		}
+	}
+	return strings.Join(names, " and ")
 }
 
 // absPath resolves p physically (symlinks, then ".."), for an absolute
@@ -573,7 +626,13 @@ func readPrompt(ctx context.Context, args, files []string, nonce string) (string
 		if len(data) > maxStdinBytes {
 			return "", fmt.Errorf("stdin is larger than %d bytes; send a smaller excerpt", maxStdinBytes)
 		}
-		if in := strings.TrimSpace(string(data)); in != "" {
+		in := strings.TrimSpace(string(data))
+		if in == "" && explicitDash {
+			// "-" asked for stdin; sending the question without it would be
+			// worse than an error.
+			return "", errors.New("stdin was empty, but the arguments end with - to attach it")
+		}
+		if in != "" {
 			if text == "" {
 				text = in
 			} else {

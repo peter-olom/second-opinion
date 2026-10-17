@@ -1096,17 +1096,30 @@ func TestFilterDriversNamedLikeAttributeStates(t *testing.T) {
 }
 
 func TestRootAcceptsAnotherLetterCase(t *testing.T) {
-	dir := newRepo(t)
-	if r, err := filepath.EvalSymlinks(dir); err == nil {
-		dir = r
+	parent := t.TempDir()
+	if r, err := filepath.EvalSymlinks(parent); err == nil {
+		parent = r
 	}
-	other := filepath.Join(filepath.Dir(dir), strings.ToUpper(filepath.Base(dir)))
-	if _, err := os.Stat(other); err != nil {
+	dir := filepath.Join(parent, "Repo")
+	os.MkdirAll(dir, 0o755)
+	run(t, dir, "init", "-q")
+	other := filepath.Join(parent, "rEPO")
+	a, errA := os.Stat(dir)
+	b, errB := os.Stat(other)
+	if errA != nil || errB != nil || !os.SameFile(a, b) {
 		t.Skip("case-sensitive filesystem")
 	}
 	root, err := Root(context.Background(), other)
 	if err != nil || !Inside(root, dir) {
 		t.Errorf("Root from %s = %q, %v; want the repository", other, root, err)
+	}
+	if !Inside(dir, filepath.Join(other, "x")) {
+		t.Error("Inside should match across letter case")
+	}
+	// A root that doesn't exist (a deleted state folder) is matched by
+	// name below its existing parent, case-folded here too.
+	if !Inside(filepath.Join(dir, "Gone"), filepath.Join(other, "gONE", "f")) {
+		t.Error("a missing root should match across letter case")
 	}
 }
 

@@ -70,6 +70,16 @@ var errTooManyPaths = errors.New("listing over the size limit")
 // Diff leaves out, with the reason it gives.
 type Exclude struct{ Path, Reason string }
 
+// InGitDir reports whether dir is inside a repository's .git folder or a
+// bare repository, where there is no work tree and the git internals
+// (config with remote URLs, objects) would be the folder shared.
+func InGitDir(ctx context.Context, dir string) bool {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	out, _, err := git(ctx, dir, 64<<10, "rev-parse", "--is-inside-git-dir", "--is-bare-repository")
+	return err == nil && strings.Contains(out, "true")
+}
+
 // ErrForeignWorkTree marks a work tree that doesn't hold its repository's .git.
 var ErrForeignWorkTree = errors.New("not using it")
 

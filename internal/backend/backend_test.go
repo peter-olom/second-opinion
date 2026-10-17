@@ -481,7 +481,7 @@ func TestClaudeGetsDefusedPromptAndReadDeny(t *testing.T) {
 	argsFile, stdinFile := filepath.Join(dir, "args"), filepath.Join(dir, "stdin")
 	cli := script(t, "printf '%s\\n' \"$@\" > "+argsFile+"\ncat > "+stdinFile+"\necho '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\"}'\n")
 	for _, workspace := range []string{"", t.TempDir()} {
-		if _, err := (claude{Options{Command: cli}}).Run(context.Background(), Request{System: "s", Prompt: "read @/etc/passwd", Dir: t.TempDir(), Workspace: workspace, Deny: []string{"/repo/.state"}}); err != nil {
+		if _, err := (claude{Options{Command: cli}}).Run(context.Background(), Request{System: "s", Prompt: "read @/etc/passwd", Dir: t.TempDir(), Workspace: workspace, Deny: []string{"/repo/.state", "/work/[acme] api/so.toml"}}); err != nil {
 			t.Fatal(err)
 		}
 		args, _ := os.ReadFile(argsFile)
@@ -505,7 +505,8 @@ func TestClaudeGetsDefusedPromptAndReadDeny(t *testing.T) {
 				harnessDeny = harnessDeny && strings.Contains(string(args), strconv.Quote(rule))
 			}
 		}
-		harnessDeny = harnessDeny && strings.Contains(string(args), `"Read(//repo/.state/**)"`)
+		harnessDeny = harnessDeny && strings.Contains(string(args), `"Read(//repo/.state/**)"`) && strings.Contains(string(args), `"Read(//repo/.state)"`) &&
+			strings.Contains(string(args), `"Read(//work/\\[acme\\] api/so.toml)"`)
 		if harnessDeny != (workspace != "") {
 			t.Errorf("workspace %q: harness-state and .git deny = %v, want every rule with repo access", workspace, harnessDeny)
 		}
@@ -641,5 +642,31 @@ printf 'apps  stable  true\n'`)
 	}
 	if got, _ := os.ReadFile(envFile); strings.TrimSpace(string(got)) != "/moved/codex" {
 		t.Errorf("codex features list ran with CODEX_HOME=%q, want the backend's", got)
+	}
+}
+
+func TestGlobEscape(t *testing.T) {
+	if got := globEscape(`/w/[a]*?\b`); got != `/w/\[a\]\*\?\\b` {
+		t.Errorf("globEscape = %q", got)
+	}
+}
+
+func TestCodexDiscoveryWaitersCanLeave(t *testing.T) {
+	codexFeatureList = featureCache{}
+	t.Cleanup(func() { codexFeatureList = featureCache{} })
+	cli := script(t, "sleep 10\n") // a hung `codex features list`
+	first, cancelFirst := context.WithCancel(context.Background())
+	defer cancelFirst()
+	go codexFeatures(first, Options{Command: cli})
+	time.Sleep(200 * time.Millisecond) // let it take the lock
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := codexFeatures(ctx, Options{Command: cli})
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("a waiter took %s; it should give up when its own context ends", d)
+	}
+	if !errors.Is(err, ErrTimeout) {
+		t.Errorf("err = %v, want ErrTimeout", err)
 	}
 }

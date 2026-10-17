@@ -513,3 +513,17 @@ func alive(pid int) bool {
 	p, err := os.FindProcess(pid)
 	return err == nil && p.Signal(syscall.Signal(0)) == nil
 }
+
+func TestExplicitDashWithEmptyStdinIsAnError(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Close() // an empty pipe: true | so ask "why?" -
+	orig := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = orig; r.Close() })
+	if _, err := readPrompt(context.Background(), []string{"why?", "-"}, nil, ""); err == nil || !strings.Contains(err.Error(), "stdin was empty") {
+		t.Errorf("err = %v, want the empty-stdin error", err)
+	}
+}

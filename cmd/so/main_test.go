@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -819,7 +820,7 @@ func TestHistoryInsideTheSharedRepoIsWarned(t *testing.T) {
 			run(context.Background(), []string{"ask", "--config", fakePiConfig(t), "--repo", "-w", "pi:x", "q"})
 		})
 	})
-	if !strings.Contains(stderr, "the run history is inside the repository shared with the panel") {
+	if !strings.Contains(stderr, "so's run history is inside the repository shared with the panel; claude panelists are denied it, but pi panelists can read it") {
 		t.Errorf("stderr = %q, want the history warning", stderr)
 	}
 }
@@ -996,5 +997,108 @@ func TestDiffExcludesSosFilesAfterTheyAreDeleted(t *testing.T) {
 	}
 	if !strings.Contains(string(prompt), "ordinary") || !strings.Contains(string(prompt), "so.toml (deleted; so's config)") {
 		t.Errorf("want the ordinary change and the deletion listed:\n%s", prompt)
+	}
+}
+
+func TestRepoRefusedInsideGitDir(t *testing.T) {
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	bare := t.TempDir()
+	if out, err := exec.Command("git", "-C", bare, "init", "-q", "--bare").CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v\n%s", err, out)
+	}
+	for _, dir := range []string{filepath.Join(repo, ".git"), bare} {
+		t.Chdir(dir)
+		if ws, err := resolveWorkspace(context.Background(), true, false, nil); err == nil {
+			t.Errorf("--repo in %s = %q; want a refusal", dir, ws)
+		}
+	}
+}
+
+func TestDenyListReachesEveryClaudeSeat(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script")
+	}
+	unsetEnv(t, backend.EnvGuard)
+	repo := t.TempDir()
+	if r, err := filepath.EvalSymlinks(repo); err == nil {
+		repo = r
+	}
+	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	state := filepath.Join(repo, ".state")
+	t.Setenv("XDG_STATE_HOME", state)
+	// Every claude invocation (two panelists and the chair, the panelists
+	// in parallel) logs its argv to a file of its own.
+	fakeDir := t.TempDir()
+	logDir := filepath.Join(fakeDir, "argv")
+	os.MkdirAll(logDir, 0o755)
+	fake := filepath.Join(fakeDir, "claude")
+	os.WriteFile(fake, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$(mktemp "+logDir+"/call.XXXXXX)\"\ncat >/dev/null\necho '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\"}'\n"), 0o755)
+	cfg := filepath.Join(repo, "so.toml")
+	os.WriteFile(cfg, []byte("[backends.claude]\ncommand = \""+fake+"\"\n[backends.codex]\ncommand = \"/nonexistent/c\"\n[backends.pi]\ncommand = \"/nonexistent/p\"\n"), 0o600)
+	t.Chdir(repo)
+	var stderr string
+	stderr = captureStderr(t, func() {
+		captureStdout(t, func() {
+			if code := run(context.Background(), []string{"ask", "--config", cfg, "--repo", "-w", "claude:a", "-w", "claude:b", "--chair", "claude:c", "q"}); code != 0 {
+				t.Errorf("exit code = %d", code)
+			}
+		})
+	})
+	files, _ := filepath.Glob(filepath.Join(logDir, "call.*"))
+	if len(files) != 3 {
+		t.Fatalf("%d claude calls, want 3", len(files))
+	}
+	var calls []string
+	for _, f := range files {
+		data, _ := os.ReadFile(f)
+		calls = append(calls, string(data))
+	}
+	for i, c := range calls {
+		for _, rule := range []string{"Read(/" + state + "/second-opinion)", "Read(/" + state + "/second-opinion/**)", "Read(/" + cfg + ")", "Read(/" + cfg + "/**)"} {
+			if !strings.Contains(c, strconv.Quote(rule)) {
+				t.Errorf("claude call %d lacks %s:\n%s", i, rule, c)
+			}
+		}
+	}
+	// An all-claude panel: no codex or pi seat to warn about.
+	if strings.Contains(stderr, "panelists can read") {
+		t.Errorf("warnings name backends the panel doesn't use: %q", stderr)
+	}
+}
+
+func TestDiffLeavesOutABackendHomeInTheRepo(t *testing.T) {
+	unsetEnv(t, backend.EnvGuard)
+	repo := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"commit", "-q", "--allow-empty", "-m", "i"}} {
+		cmd := exec.Command("git", append([]string{"-C", repo, "-c", "user.email=a@b", "-c", "user.name=a"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	home := filepath.Join(repo, ".codex-home")
+	os.MkdirAll(home, 0o700)
+	os.WriteFile(filepath.Join(home, "auth.json"), []byte(`{"token":"AUTH-SENTINEL"}`), 0o600)
+	os.WriteFile(filepath.Join(repo, "a.go"), []byte("package a // ordinary\n"), 0o644)
+	fakeDir := t.TempDir()
+	fake := filepath.Join(fakeDir, "pi")
+	got := filepath.Join(fakeDir, "got")
+	os.WriteFile(fake, []byte("#!/bin/sh\ncat > "+got+"\necho ok\n"), 0o755)
+	cfg := filepath.Join(fakeDir, "config.toml")
+	os.WriteFile(cfg, []byte(stubOtherBackends+"[backends.pi]\ncommand = \""+fake+"\"\n"), 0o600)
+	t.Setenv("CODEX_HOME", home)
+	t.Chdir(repo)
+	captureStderr(t, func() {
+		captureStdout(t, func() {
+			run(context.Background(), []string{"ask", "--config", cfg, "--diff", "--no-repo", "-w", "pi:x", "q"})
+		})
+	})
+	prompt, _ := os.ReadFile(got)
+	if strings.Contains(string(prompt), "AUTH-SENTINEL") || !strings.Contains(string(prompt), "ordinary") {
+		t.Errorf("codex's home went out with the diff, or the ordinary change didn't:\n%s", prompt)
 	}
 }
