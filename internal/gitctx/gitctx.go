@@ -88,13 +88,19 @@ func Diff(ctx context.Context, dir, base, nonce string) (Context, error) {
 		return Context{}, fmt.Errorf("--diff: unknown base %q", base)
 	}
 	from, baseDesc := base, base
-	if mb, _, err := git(ctx, root, 64<<10, "merge-base", base, "HEAD"); err == nil {
-		if mb = strings.TrimSpace(mb); mb != "" {
-			from = mb
-			if base != "HEAD" {
-				baseDesc = fmt.Sprintf("%s (merge-base %.7s)", base, mb)
+	if base != "HEAD" {
+		// Without a merge-base, a diff against the branch tip would show the
+		// base's later commits as reverted changes and attach files only it
+		// touched, so stop instead.
+		mb, _, err := git(ctx, root, 64<<10, "merge-base", base, "HEAD")
+		if mb = strings.TrimSpace(mb); err != nil || mb == "" {
+			if ctx.Err() != nil {
+				return Context{}, ctx.Err()
 			}
+			return Context{}, fmt.Errorf("--base %s: no common ancestor with HEAD (a shallow clone, or unrelated history); fetch more history or pass a commit", base)
 		}
+		from = mb
+		baseDesc = fmt.Sprintf("%s (merge-base %.7s)", base, mb)
 	}
 
 	// Every path in the diff, deletions included, and the untracked files.

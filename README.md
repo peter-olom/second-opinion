@@ -42,8 +42,9 @@ so uninstall --all    # also removes the config file in use (--config or $SECOND
 
 It lists what it will remove and asks before deleting (`--yes` skips the prompt). Some details:
 
-- It deletes only files `so` created: each `SKILL.md`, the `runs/*.json` files, the binary, and
-  with `--all` the config file. Folders are removed only if that leaves them empty. Anything you
+- It deletes only files `so` manages: each `second-opinion/SKILL.md` (that skill folder belongs to
+  `so`; `so skill install` overwrites it and refuses to write through a symlink), the `runs/*.json`
+  files, the binary, and with `--all` the config file. Folders are removed only if that leaves them empty. Anything you
   added stays, and so does a config that shares a folder with the history.
 - It leaves symlinked folders alone, and never removes a folder that one of them points to, so no
   link is left dangling. To be safe, with `--all` it also keeps the config's folder (even if empty)
@@ -74,8 +75,9 @@ so ask -p panel --format json "..."                                        # mac
 
 The result goes to stdout. Progress goes to stderr when stderr is a terminal, or with `-v`. If some
 panelists fail, the run still succeeds with the ones that answered. Exit codes: 0 when at least
-one panelist answered, 1 when every panelist failed (or on an error such as a bad config), 2 for a
-usage error, 3 when `so` refuses to run inside a panelist, and 130 when the run was interrupted,
+one panelist answered, 1 when every panelist failed or on any other error (a bad config, an unknown
+profile or mode, a `--diff` that can't be collected), 2 for a malformed command line (an unknown
+command or flag, a bad flag value, or conflicting flags), 3 when `so` refuses to run inside a panelist, and 130 when the run was interrupted,
 whatever had answered by then.
 
 ## Anonymous panels
@@ -122,7 +124,8 @@ model, and `--reveal` or `so runs show --reveal` shows which models were involve
 
 Each run is saved privately to `~/.local/state/second-opinion/runs/<run-id>.json`, or under
 `$XDG_STATE_HOME`. Files are `0600` and the folder is `0700`. A record holds the prompt, the system
-prompts sent, every answer and error, timings, and which model was which panelist. The run ID
+prompts sent, every answer and error, timings, and which model was which panelist (as configured:
+a panelist without a `model` used its CLI's default, which `so` can't see, and the key says so). The run ID
 appears at the top of the answer; if the record can't be saved, `so` says so on stderr and the
 answer has no run ID.
 
@@ -131,7 +134,7 @@ so runs                          # recent runs: ID, profile, mode, how many answ
 so runs show last                # reprint a run (still anonymous)
 so runs show a3f9 --reveal       # unblind it: append the panel key (any unique part of the ID works)
 so runs show a3f9 --prompt       # include the exact prompt the panel received
-so runs show a3f9 --json         # the full record
+so runs show a3f9 --json         # the record as JSON (still anonymous without --reveal)
 ```
 
 Runs older than 7 days are pruned on every `so ask`. Change that with `history_days`, or turn
@@ -181,13 +184,22 @@ reach differs, and these are the tested guarantees:
 | backend | without repo access | with repo access |
 |---|---|---|
 | claude | No tools at all (`--tools ""`). | `Read`, `Grep`, `Glob` only. Reads outside the repository are denied. |
-| codex | Every Codex feature except networking is disabled, including **connected apps** (Gmail, GitHub, Jira, …), browser and computer use, sub-agents, image generation, and web search; so are its shell tools. Codex has no switch that guarantees no tools at all, so a read-only command path may occasionally remain. | The same, but with read-only commands enabled so it can explore the repository. Those can read any file you can read, not just the repository. Codex also loads the repository's `AGENTS.md`. |
-| pi | No tools (`--no-tools`) and no context files. | `read`, `grep`, `find`, `ls`, which are not confined to the repository. pi also loads `AGENTS.md` context files from the repository, its parent folders, and `~/.pi/agent`. |
+| codex | Every Codex feature except networking is disabled, including **connected apps** (Gmail, GitHub, Jira, …), browser and computer use, sub-agents, image generation, and web search; so are its shell tools. Codex has no switch that guarantees no tools at all, so a read-only command path may occasionally remain. | The same, but with read-only commands enabled so it can explore the repository. Those can read any file you can read, not just the repository. The repository's `AGENTS.md` is not loaded (`project_doc_max_bytes = 0`). |
+| pi | No tools (`--no-tools`) and no context files. | `read`, `grep`, `find`, `ls`, which are not confined to the repository. Still no context files (`--no-context-files`), so no `AGENTS.md` is loaded. |
 
-Claude also gets `--setting-sources "" --strict-mcp-config` (your `CLAUDE.md` memory files may still
-load), codex gets `--ignore-user-config --ignore-rules`, and pi gets `--no-extensions --no-skills
---no-approve` (your pi settings, such as the default model, still apply). Every panelist is told not
-to use tools without repo access.
+Claude also gets `--setting-sources "" --strict-mcp-config` (in testing, a repository's `CLAUDE.md`
+did not load), codex gets `--ignore-user-config --ignore-rules`, and pi gets `--no-extensions
+--no-skills --no-approve` (your pi settings, such as the default model, still apply). Every
+panelist is told not to use tools without repo access. One exception: Codex still loads your
+global `~/.codex/AGENTS.md` into every Codex panelist, since it has no switch to turn that off.
+
+A reviewed repository's files can still try to steer a panelist that reads them, as any untrusted
+input can. For code you don't trust (a third-party pull request, a fresh clone), use `--no-repo`
+and attach what matters with `--diff` or `-f`.
+
+System prompts, including your custom mode instructions, are passed to claude and codex as
+command-line arguments, which other users on the same machine can see in the process list. The
+prompt itself always goes through stdin.
 
 The Codex lockdown asks Codex for its feature list (`codex features list`), which reads your
 `~/.codex/config.toml`. If that fails, Codex panelists stop with an error rather than run with

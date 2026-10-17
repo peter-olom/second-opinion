@@ -42,10 +42,13 @@ func (p pi) Run(ctx context.Context, req Request) (string, error) {
 		"--system-prompt", req.System,
 		"--append-system-prompt", appendFile,
 	}
+	// Never load AGENTS.md context files: a reviewed repository's could
+	// steer the panelist, and the user's own are not for panelists.
+	args = append(args, "--no-context-files")
 	if req.Workspace != "" {
 		args = append(args, "--tools", "read,grep,find,ls")
 	} else {
-		args = append(args, "--no-tools", "--no-context-files")
+		args = append(args, "--no-tools")
 	}
 	if req.Provider != "" {
 		args = append(args, "--provider", req.Provider)

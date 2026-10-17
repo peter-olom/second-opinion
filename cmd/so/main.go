@@ -30,6 +30,7 @@ import (
 	"github.com/peter-olom/second-opinion/internal/gitctx"
 	"github.com/peter-olom/second-opinion/internal/history"
 	"github.com/peter-olom/second-opinion/internal/panel"
+	"github.com/peter-olom/second-opinion/internal/procgroup"
 	"github.com/peter-olom/second-opinion/internal/render"
 )
 
@@ -107,6 +108,21 @@ func fail(err error) int {
 	return 1
 }
 
+// usageErr reports a malformed command line.
+func usageErr(err error) int {
+	fmt.Fprintln(os.Stderr, "so:", err)
+	return 2
+}
+
+// failCtx reports err, or an interruption as such (exit 130).
+func failCtx(ctx context.Context, err error) int {
+	if ctx.Err() != nil {
+		fmt.Fprintln(os.Stderr, "so: interrupted")
+		return 130
+	}
+	return fail(err)
+}
+
 // parse parses flags, returning an exit code if the command should stop.
 func parse(fs *pflag.FlagSet, args []string) (int, bool) {
 	if err := fs.Parse(args); err != nil {
@@ -156,16 +172,16 @@ func cmdAsk(ctx context.Context, args []string) int {
 		return 3
 	}
 	if *timeout < 0 {
-		return fail(errors.New("--timeout must be positive"))
+		return usageErr(errors.New("--timeout must be positive"))
 	}
 	if *format != "md" && *format != "json" {
-		return fail(fmt.Errorf("unknown format %q (want md or json)", *format))
+		return usageErr(fmt.Errorf("unknown format %q (want md or json)", *format))
 	}
 	if *profile != "" && len(*with) > 0 {
-		return fail(errors.New("use either --profile or --with, not both"))
+		return usageErr(errors.New("use either --profile or --with, not both"))
 	}
 	if *repo && *noRepo {
-		return fail(errors.New("use either --repo or --no-repo, not both"))
+		return usageErr(errors.New("use either --repo or --no-repo, not both"))
 	}
 
 	cfg, err := config.Load(*cfgPath)
@@ -179,9 +195,9 @@ func cmdAsk(ctx context.Context, args []string) int {
 	// Attachment tags carry a random suffix so attached content can't close
 	// its own block and pose as another attachment.
 	nonce := newNonce()
-	prompt, err := readPrompt(fs.Args(), *files, nonce)
+	prompt, err := readPrompt(ctx, fs.Args(), *files, nonce)
 	if err != nil {
-		return fail(err)
+		return failCtx(ctx, err)
 	}
 	var attached string
 	if *diff || *base != "" {
@@ -193,7 +209,7 @@ func cmdAsk(ctx context.Context, args []string) int {
 		}
 		gc, err := gitctx.Diff(ctx, ".", firstNonEmpty(*base, "HEAD"), nonce)
 		if err != nil {
-			return fail(err)
+			return failCtx(ctx, err)
 		}
 		prompt += "\n\n" + gc.Text
 		attached = gc.Summary
@@ -202,7 +218,7 @@ func cmdAsk(ctx context.Context, args []string) int {
 		return fail(fmt.Errorf("the prompt with attachments is %d bytes, over the %d-byte limit; attach less", len(prompt), maxPromptBytes))
 	}
 	if p.Workspace, err = resolveWorkspace(ctx, *repo, *noRepo, p.Mode.Repo); err != nil {
-		return fail(err)
+		return failCtx(ctx, err)
 	}
 	p.Anonymous = cfg.Anonymous()
 
@@ -385,7 +401,7 @@ var (
 // readPrompt builds the prompt from arguments, stdin, and attached files.
 // Stdin is read only when there is no prompt argument, or the argument is
 // "-", so a so called inside a shell loop never swallows the loop's input.
-func readPrompt(args, files []string, nonce string) (string, error) {
+func readPrompt(ctx context.Context, args, files []string, nonce string) (string, error) {
 	// Decided from the arguments themselves, not their text, so an empty
 	// argument (so ask "$q" with $q unset) never reads stdin.
 	useStdin := len(args) == 0 || args[len(args)-1] == "-"
@@ -404,9 +420,9 @@ func readPrompt(args, files []string, nonce string) (string, error) {
 		fmt.Fprintln(os.Stderr, "so: stdin was not read; end the arguments with - to attach it")
 	}
 	if useStdin && stdinHasData() {
-		data, err := io.ReadAll(io.LimitReader(os.Stdin, int64(maxStdinBytes)+1))
+		data, err := readStdin(ctx)
 		if err != nil {
-			return "", fmt.Errorf("reading stdin: %w", err)
+			return "", err
 		}
 		if len(data) > maxStdinBytes {
 			return "", fmt.Errorf("stdin is larger than %d bytes; send a smaller excerpt", maxStdinBytes)
@@ -790,7 +806,9 @@ func boundedOutput(ctx context.Context, name string, args ...string) ([]byte, er
 	cmd.WaitDelay = 2 * time.Second
 	out := &cappedWriter{limit: 64 << 10}
 	cmd.Stdout = out
+	procgroup.Isolate(cmd)
 	err := cmd.Run()
+	procgroup.Kill(cmd) // helpers the CLI started don't outlive it
 	return out.buf, err
 }
 
@@ -928,6 +946,14 @@ func cmdSkill(args []string) int {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return fail(err)
 		}
+		// Never write through a symlink, which could point anywhere.
+		for _, p := range []string{filepath.Dir(path), path} {
+			if info, err := os.Lstat(p); err == nil && info.Mode()&os.ModeSymlink != 0 {
+				return fail(fmt.Errorf("%s is a symlink; not writing through it", p))
+			} else if err == nil && p == path && !info.Mode().IsRegular() {
+				return fail(fmt.Errorf("%s is not a regular file", p))
+			}
+		}
 		if err := os.WriteFile(path, []byte(assets.Skill), 0o644); err != nil {
 			return fail(err)
 		}
@@ -1047,4 +1073,28 @@ func newNonce() string {
 	b := make([]byte, 6)
 	rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// readStdin reads up to maxStdinBytes+1 bytes of stdin, giving up when ctx
+// ends, so an interrupt isn't stuck behind a pipe that never closes.
+func readStdin(ctx context.Context) ([]byte, error) {
+	type result struct {
+		data []byte
+		err  error
+	}
+	in := os.Stdin // the goroutine may outlive this call
+	done := make(chan result, 1)
+	go func() {
+		data, err := io.ReadAll(io.LimitReader(in, int64(maxStdinBytes)+1))
+		done <- result{data, err}
+	}()
+	select {
+	case r := <-done:
+		if r.err != nil {
+			return nil, fmt.Errorf("reading stdin: %w", r.err)
+		}
+		return r.data, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }

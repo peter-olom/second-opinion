@@ -50,6 +50,9 @@ func (c codex) Run(ctx context.Context, req Request) (string, error) {
 		// them on. A one-token catalog budget drops every skill from what
 		// the model sees (verified with Codex 0.159).
 		"-c", "skills.max_context_tokens=1",
+		// Don't load the repository's AGENTS.md, which could steer the
+		// panelist. (~/.codex/AGENTS.md still loads; Codex has no switch.)
+		"-c", "project_doc_max_bytes=0",
 	}
 	features, err := codexFeatures(ctx, c.opts)
 	if err != nil {

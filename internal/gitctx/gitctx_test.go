@@ -707,3 +707,15 @@ func TestDiffTagsCarryTheNonce(t *testing.T) {
 		}
 	}
 }
+
+func TestBaseWithoutMergeBaseIsAnError(t *testing.T) {
+	dir := newRepo(t)
+	run(t, dir, "checkout", "-q", "--orphan", "other")
+	write(t, dir, "other.go", "package other\n")
+	run(t, dir, "add", "other.go")
+	run(t, dir, "commit", "-q", "-m", "unrelated")
+	_, err := Diff(context.Background(), dir, "main", "")
+	if err == nil || !strings.Contains(err.Error(), "no common ancestor") {
+		t.Errorf("err = %v, want a refusal without a merge-base", err)
+	}
+}

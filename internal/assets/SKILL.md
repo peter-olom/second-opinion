@@ -36,7 +36,9 @@ panelists can also read files elsewhere on disk, which may include saved agent c
   or why.
 
 Everything you send goes to the user's model providers. Don't attach secrets, and don't turn on
-repository access in a repo with secrets the user hasn't agreed to share. `--diff` leaves out files
+repository access in a repo with secrets the user hasn't agreed to share. Use `--no-repo` for code you
+don't trust (a third-party pull request, a fresh clone): its files could try to steer a panelist
+that can read your other files. `--diff` leaves out files
 with a git `filter` (git-crypt and the like), but with repository access panelists can still read
 their working copies; add `--no-repo` in such a repo.
 
@@ -88,7 +90,10 @@ when you report the result.
 - A call takes from about 10 seconds to several minutes. High-effort panels with repository
   access are the slowest, and audits slower still. Each model call gets the full `timeout`
   (15 minutes by default), and the chair runs after the panel, so give the command at least
-  twice that, and do not start it again while it is still running.
+  twice that, and do not start it again while it is still running. If your shell tool caps how
+  long a command can run, start `so ask` in the background, or pass a `--timeout` well under half
+  that cap. A run that is killed before it finishes is not recorded; a background run is, and
+  `so runs show last` prints its answer once it is done.
 - The answer is markdown on stdout. Errors go to stderr, and so does progress when stderr is a
   terminal or with `-v`.
 - If one panelist fails, the others still return. The exit code is 1 if every panelist failed (or

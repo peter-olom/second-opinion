@@ -112,3 +112,15 @@ func TestNamedPanelShowsWhichFallbackAnswered(t *testing.T) {
 		t.Errorf("a named panel without fallbacks needs no key:\n%s", b.String())
 	}
 }
+
+func TestKeySaysWhenTheModelWasTheCLIDefault(t *testing.T) {
+	res := anonymousResult()
+	res.Opinions[1].Panelist = &config.Panelist{Backend: "pi", Effort: "high"}
+	var b strings.Builder
+	if err := Markdown(&b, res); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "- Panelist B: `pi@high` (the CLI's default model, not recorded)") {
+		t.Errorf("key should flag the unrecorded default model:\n%s", b.String())
+	}
+}

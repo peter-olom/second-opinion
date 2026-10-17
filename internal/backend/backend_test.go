@@ -68,7 +68,7 @@ func TestLeftoverHelpersAreKilled(t *testing.T) {
 	if out, _ := os.ReadFile("/proc/" + pid + "/stat"); len(out) > 0 && !strings.Contains(string(out), " Z ") {
 		t.Errorf("helper %s still running after the CLI exited", pid)
 	}
-	if runtime.GOOS == "darwin" {
+	if runtime.GOOS != "linux" { // Linux was checked above; Signal(0) can't tell a zombie there
 		if p, err := os.FindProcess(atoi(pid)); err == nil && p.Signal(nil0()) == nil {
 			t.Errorf("helper %s still running after the CLI exited", pid)
 		}
@@ -208,7 +208,7 @@ func TestClaudeAndPiLockdownFlags(t *testing.T) {
 		{"claude, no repo", claudeB, "", []string{"--tools\n\n", "--strict-mcp-config", "--setting-sources\n\n", "--no-session-persistence", "--disable-slash-commands"}, []string{"Read,Grep,Glob"}},
 		{"claude, repo", claudeB, repo, []string{"--tools\nRead,Grep,Glob\n", "--strict-mcp-config", "--setting-sources\n\n", "--no-session-persistence", "--disable-slash-commands"}, nil},
 		{"pi, no repo", piB, "", []string{"--no-tools", "--no-context-files", "--no-extensions", "--no-skills", "--no-approve", "--no-session", "--no-prompt-templates"}, []string{"--tools"}},
-		{"pi, repo", piB, repo, []string{"--tools\nread,grep,find,ls\n", "--no-extensions", "--no-skills", "--no-approve", "--no-session", "--no-prompt-templates"}, []string{"--no-tools"}},
+		{"pi, repo", piB, repo, []string{"--tools\nread,grep,find,ls\n", "--no-context-files", "--no-extensions", "--no-skills", "--no-approve", "--no-session", "--no-prompt-templates"}, []string{"--no-tools"}},
 	} {
 		args := argvOf(t, tc.b, tc.workspace)
 		for _, w := range tc.want {
@@ -296,7 +296,7 @@ cat >/dev/null; echo ok > "$out"`)
 		if ws != "" {
 			cwd = ws
 		}
-		for _, want := range []string{"--sandbox\nread-only\n", "--ignore-user-config\n", "--ignore-rules\n", "--ephemeral\n", "--cd\n" + cwd + "\n", "--disable\napps\n", `web_search="disabled"`, `shell_environment_policy.inherit="core"`, `shell_environment_policy.set={SECOND_OPINION_DEPTH="1"}`, "skills.max_context_tokens=1"} {
+		for _, want := range []string{"--sandbox\nread-only\n", "--ignore-user-config\n", "--ignore-rules\n", "--ephemeral\n", "--cd\n" + cwd + "\n", "--disable\napps\n", `web_search="disabled"`, `shell_environment_policy.inherit="core"`, `shell_environment_policy.set={SECOND_OPINION_DEPTH="1"}`, "skills.max_context_tokens=1", "project_doc_max_bytes=0"} {
 			if !strings.Contains(args, want) {
 				t.Errorf("workspace %q: missing %q in:\n%s", ws, want, args)
 			}

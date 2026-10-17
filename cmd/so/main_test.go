@@ -293,3 +293,26 @@ func TestAPIKeyVars(t *testing.T) {
 		t.Errorf("pi = %v; its provider keys are how it works", got)
 	}
 }
+
+func TestSkillInstallRefusesSymlinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks")
+	}
+	dir := t.TempDir()
+	victim := filepath.Join(t.TempDir(), "victim.txt")
+	os.WriteFile(victim, []byte("keep me"), 0o644)
+	os.MkdirAll(filepath.Join(dir, "second-opinion"), 0o755)
+	if err := os.Symlink(victim, filepath.Join(dir, "second-opinion", "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+	captureStderr(t, func() {
+		captureStdout(t, func() {
+			if code := run(context.Background(), []string{"skill", "install", "--dir", dir}); code == 0 {
+				t.Error("install wrote through a symlink")
+			}
+		})
+	})
+	if data, _ := os.ReadFile(victim); string(data) != "keep me" {
+		t.Errorf("the symlink's target was overwritten: %q", data)
+	}
+}

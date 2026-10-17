@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/peter-olom/second-opinion/internal/config"
 	"github.com/peter-olom/second-opinion/internal/panel"
 )
 
@@ -85,10 +86,10 @@ func writeKey(b *strings.Builder, r panel.Result) {
 		if o.Panelist == nil {
 			continue
 		}
-		line := fmt.Sprintf("- %s: `%s`", o.Label, o.Panelist.Spec())
+		line := fmt.Sprintf("- %s: %s", o.Label, keySpec(*o.Panelist))
 		for _, a := range o.Attempts {
 			if a.Panelist != nil {
-				line += fmt.Sprintf(" (after `%s` hit a %s limit)", a.Panelist.Spec(), a.Kind)
+				line += fmt.Sprintf(" (after %s hit a %s limit)", keySpec(*a.Panelist), a.Kind)
 			}
 		}
 		lines = append(lines, line)
@@ -99,6 +100,15 @@ func writeKey(b *strings.Builder, r panel.Result) {
 	b.WriteString("\n---\n\n## Panel key\n\n")
 	b.WriteString(strings.Join(lines, "\n"))
 	b.WriteString("\n")
+}
+
+// keySpec names a panelist in the key. Without a model, the CLI used its own
+// default, which so cannot see, so the key says so rather than imply more.
+func keySpec(p config.Panelist) string {
+	if p.Model == "" {
+		return fmt.Sprintf("`%s` (the CLI's default model, not recorded)", p.Spec())
+	}
+	return fmt.Sprintf("`%s`", p.Spec())
 }
 
 // status is the parenthetical after a heading: timing, any fallback, and why it failed.

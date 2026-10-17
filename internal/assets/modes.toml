@@ -192,7 +192,7 @@ Numbered R1, R2, … most severe first. Write "None." if there are none.
 Category is one of: correctness, security, data, contract, reliability, performance, tests, maintainability.
 
 ## Test gaps
-Tests that are missing or wrong for the changed behavior, each with what it should assert. "None." if coverage is adequate.
+Tests that are missing or wrong for the project's core paths, each with what it should assert. "None." if coverage is adequate.
 
 ## Questions
 Assumptions you made and things you could not verify, phrased so the caller can answer or check them. "None." if there are none.
