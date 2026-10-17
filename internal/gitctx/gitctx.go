@@ -52,8 +52,10 @@ type Context struct {
 
 // Diff renders the changes in the working tree relative to base. For a branch
 // such as "main" the diff starts at the merge-base, so it shows this branch's
-// work (committed or not) and none of main's later commits.
-func Diff(ctx context.Context, dir, base string) (Context, error) {
+// work (committed or not) and none of main's later commits. A non-empty nonce
+// is added to the block tags (<file-NONCE …>), so a changed file can't close
+// its own block and pass its content off as another file's.
+func Diff(ctx context.Context, dir, base, nonce string) (Context, error) {
 	ctx, cancel := context.WithTimeout(ctx, diffTimeout)
 	defer cancel()
 	if strings.HasPrefix(base, "-") {
@@ -169,7 +171,8 @@ func Diff(ctx context.Context, dir, base string) (Context, error) {
 	if unparsed > 0 {
 		diff += fmt.Sprintf("\n[%d file section(s) left out: unrecognised diff header]", unparsed)
 	}
-	fmt.Fprintf(&b, "<git-diff base=%q>\n%s\n</git-diff>", baseDesc, strings.TrimRight(diff, "\n"))
+	diffTag, fileTag := Tag("git-diff", nonce), Tag("file", nonce)
+	fmt.Fprintf(&b, "<%s base=%q>\n%s\n</%s>", diffTag, baseDesc, strings.TrimRight(diff, "\n"), diffTag)
 
 	var omitted, attached []string
 	total := 0
@@ -199,7 +202,7 @@ func Diff(ctx context.Context, dir, base string) (Context, error) {
 		}
 		total += len(data)
 		attached = append(attached, path)
-		fmt.Fprintf(&b, "\n\n<file path=%q status=%q>\n%s\n</file>", path, status, strings.TrimRight(string(data), "\n"))
+		fmt.Fprintf(&b, "\n\n<%s path=%q status=%q>\n%s\n</%s>", fileTag, path, status, strings.TrimRight(string(data), "\n"), fileTag)
 	}
 	for _, p := range changed {
 		attach(p, "changed")
@@ -552,4 +555,12 @@ func plural(n int) string {
 		return ""
 	}
 	return "s"
+}
+
+// Tag names an attachment block: name, or name-nonce with a nonce.
+func Tag(name, nonce string) string {
+	if nonce == "" {
+		return name
+	}
+	return name + "-" + nonce
 }

@@ -35,7 +35,9 @@ panel has repository access, the code in the repository.
   or why.
 
 Everything you send goes to the user's model providers. Don't attach secrets, and don't turn on
-repository access in a repo with secrets the user hasn't agreed to share.
+repository access in a repo with secrets the user hasn't agreed to share. `--diff` leaves out files
+with a git `filter` (git-crypt and the like), but with repository access panelists can still read
+their working copies; add `--no-repo` in such a repo.
 
 ## Usage
 
@@ -86,9 +88,10 @@ when you report the result.
   access are the slowest, and audits slower still. Each model call gets the full `timeout`
   (15 minutes by default), and the chair runs after the panel, so give the command at least
   twice that, and do not start it again while it is still running.
-- The answer is markdown on stdout. Progress and errors go to stderr.
-- If one panelist fails, the others still return. The exit code is non-zero only if every panelist
-  failed. Each failure shows a kind and a suggested fix:
+- The answer is markdown on stdout. Errors go to stderr, and so does progress when stderr is a
+  terminal or with `-v`.
+- If one panelist fails, the others still return. The exit code is 1 if every panelist failed, and
+  130 if the run was interrupted. Each failure shows a kind and a suggested fix:
   - `quota`: a usage or rate limit was hit. A configured `fallback` is tried automatically.
     Otherwise, retry later or suggest that the user add a fallback.
   - `auth`: the CLI is not signed in. Ask the user to sign in; don't do it for them.
@@ -103,7 +106,7 @@ when you report the result.
 - Panels are anonymous by default (`anonymize = false` turns this off). Each run assigns the labels `Panelist A`, `B`, … at random, so you cannot
   tell which model said what, and neither can the chair. Judge each response on its reasoning and
   evidence, and don't try to work out who wrote it.
-- Unless history is turned off, every answer starts with a run ID, and each run is kept locally
+- Unless history is turned off (or the record could not be saved), the answer starts with a run ID, and each run is kept locally
   (7 days by default). If the user asks which
   model said what, run `so runs show <id> --reveal`. Don't unblind a panel otherwise. `so runs`
   lists recent runs, and `so runs show <id> --prompt` shows exactly what the panel was sent.
@@ -123,8 +126,8 @@ it is signed in and find the models it can use:
 
 | backend | signed in? | models |
 |---|---|---|
-| `claude` (Claude Code) | `claude auth status`: `loggedIn`, and `authMethod` shows whether it uses a subscription or a metered API key | The aliases listed under `--model` in `claude --help`, such as `opus` (strongest) and `sonnet` (faster). Aliases always point to the latest model, so prefer them to pinned IDs. |
-| `codex` (Codex CLI) | `codex login status` | `codex debug models` prints the catalog as JSON. Use entries with `"visibility": "list"`. Each entry lists its `supported_reasoning_levels`. The user's current model is `model` in `~/.codex/config.toml`. |
+| `claude` (Claude Code) | `claude auth status`: `loggedIn`, and `authMethod` shows whether it uses a subscription or a metered API key. `so doctor` also warns if `ANTHROPIC_API_KEY` or a Codex API key is set in the environment, which panelists inherit | The aliases listed under `--model` in `claude --help`, such as `opus` (strongest) and `sonnet` (faster). Aliases always point to the latest model, so prefer them to pinned IDs. |
+| `codex` (Codex CLI) | `codex login status` | `codex debug models` prints the catalog as JSON. Use entries with `"visibility": "list"`. Each entry lists its `supported_reasoning_levels`. Panelists run without `~/.codex/config.toml`, so its `model` is not used: always set a Codex `model`. |
 | `pi` | `pi --list-models` lists models only for providers it has credentials for. `pi auth check --provider <name>` checks one provider. | Use the `provider/model` IDs from `pi --list-models`, such as `ollama/glm-5.3:cloud`. pi's own default is `defaultProvider`/`defaultModel` in `~/.pi/agent/settings.json`. |
 
 If a CLI is installed but not signed in, tell the user rather than fixing it yourself.
@@ -153,7 +156,8 @@ Some principles:
 - **Effort:** `low` or `medium` for quick checks, `high` for panels. `xhigh` and `max` are much
   slower and costlier, so only use them if the user asks.
 - **Avoid pinning when you can.** Use aliases (Claude), or leave `model` out to use the CLI's
-  current default. Pinned IDs eventually get retired. Open-model providers retire models often.
+  current default (pi's from its settings). Codex is the exception: panelists ignore
+  `~/.codex/config.toml`, so set its `model`. Pinned IDs eventually get retired. Open-model providers retire models often.
 - **Fallbacks for limits.** If the user often hits a subscription's usage limits, give that
   panelist a `fallback` list. Fallbacks are tried in order when it hits a usage or rate limit, so
   use models from another provider, for example

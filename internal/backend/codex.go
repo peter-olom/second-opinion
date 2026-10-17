@@ -42,6 +42,9 @@ func (c codex) Run(ctx context.Context, req Request) (string, error) {
 		"--output-last-message", lastMessage,
 		"--cd", req.cwd(),
 		"-c", "developer_instructions=" + tomlString(req.System),
+		// Commands Codex runs see only core variables (HOME, PATH, …), not
+		// the caller's API keys and tokens.
+		"-c", `shell_environment_policy.inherit="core"`,
 	}
 	features, err := codexFeatures(ctx, c.opts)
 	if err != nil {
@@ -128,8 +131,11 @@ func codexFeatures(ctx context.Context, o Options) ([]string, error) {
 	}
 	out, err := execCLI(ctx, Command("codex", o), []string{"features", "list"}, os.TempDir(), env, "")
 	switch {
+	case errors.Is(parent.Err(), context.DeadlineExceeded):
+		// The panelist's own timeout ran out during discovery.
+		return nil, fmt.Errorf("codex: listing its features: %w", ErrTimeout)
 	case parent.Err() != nil:
-		// The run was interrupted or timed out; keep that identity.
+		// The run was interrupted; keep that identity.
 		return nil, fmt.Errorf("codex: listing its features: %w", parent.Err())
 	case ctx.Err() != nil:
 		return nil, errors.New("codex: `codex features list` did not finish within 30s; cannot disable its tools, so not running it")

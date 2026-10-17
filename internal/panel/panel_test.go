@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/peter-olom/second-opinion/internal/config"
 )
@@ -275,5 +276,19 @@ func TestRedactHintNamesTheRun(t *testing.T) {
 	unsaved.Redact()
 	if strings.Contains(unsaved.Opinions[0].Error, "so runs show") || !strings.Contains(unsaved.Opinions[0].Error, "not recorded") {
 		t.Errorf("hint = %q, want no pointer to a run that does not exist", unsaved.Opinions[0].Error)
+	}
+}
+
+func TestChairPromptBoundsEachAnswer(t *testing.T) {
+	huge := "x" + strings.Repeat("é", 1<<20) // the odd byte puts the cut mid-rune
+	got := ChairPrompt("req", []Opinion{{Label: "Panelist A", Output: huge}, {Label: "Panelist B", Output: "short"}})
+	if len(got) > maxChairResponse+4096 {
+		t.Errorf("chair prompt is %d bytes; each answer should be cut to %d", len(got), maxChairResponse)
+	}
+	if !utf8.ValidString(got) {
+		t.Error("the cut split a character")
+	}
+	if !strings.Contains(got, "cut here: the full answer is 2097153 bytes") || !strings.Contains(got, "short") {
+		t.Errorf("missing the cut marker or the short answer")
 	}
 }

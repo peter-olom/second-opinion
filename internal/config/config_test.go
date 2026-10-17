@@ -129,19 +129,31 @@ func TestModeTOMLRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	no := false
+	modes := map[string]Mode{"tricky": {
+		Description:       `quotes " and \ backslash`,
+		Instructions:      "has ''' triple quotes\nand a trailing newline\n",
+		Format:            "## Answer\n\ttabbed",
+		ChairInstructions: "chair",
+		ChairFormat:       "chair format",
+		Repo:              &no,
+	}}
 	for _, name := range cfg.ModeNames() {
-		want := cfg.Modes[name]
+		modes[name] = cfg.Modes[name]
+	}
+	for name, want := range modes {
+		// A new name, so no built-in fills in a field TOML() left out.
+		rt := "rt-" + name
 		path := filepath.Join(t.TempDir(), "config.toml")
-		if err := os.WriteFile(path, []byte(want.TOML(name)), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(want.TOML(rt)), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		got, err := Load(path)
 		if err != nil {
-			t.Fatalf("%s: %v\n%s", name, err, want.TOML(name))
+			t.Fatalf("%s: %v\n%s", name, err, want.TOML(rt))
 		}
-		if g := got.Modes[name]; g.Format != want.Format || g.Instructions != want.Instructions ||
-			g.ChairFormat != want.ChairFormat || g.ChairInstructions != want.ChairInstructions {
-			t.Errorf("mode %s did not round-trip through TOML", name)
+		if g := got.Modes[rt]; !reflect.DeepEqual(g, want) {
+			t.Errorf("mode %s did not round-trip through TOML:\n got %+v\nwant %+v", name, g, want)
 		}
 	}
 }

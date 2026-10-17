@@ -3,6 +3,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -174,7 +176,10 @@ func cmdAsk(ctx context.Context, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	prompt, err := readPrompt(fs.Args(), *files)
+	// Attachment tags carry a random suffix so attached content can't close
+	// its own block and pose as another attachment.
+	nonce := newNonce()
+	prompt, err := readPrompt(fs.Args(), *files, nonce)
 	if err != nil {
 		return fail(err)
 	}
@@ -186,7 +191,7 @@ func cmdAsk(ctx context.Context, args []string) int {
 		if root, err := gitctx.Root(ctx, "."); err == nil && containsHome(root) {
 			return fail(errors.New("--diff would collect from a git repository rooted at your home directory; run so inside a project repository"))
 		}
-		gc, err := gitctx.Diff(ctx, ".", firstNonEmpty(*base, "HEAD"))
+		gc, err := gitctx.Diff(ctx, ".", firstNonEmpty(*base, "HEAD"), nonce)
 		if err != nil {
 			return fail(err)
 		}
@@ -219,6 +224,9 @@ func cmdAsk(ctx context.Context, args []string) int {
 			fmt.Fprintln(os.Stderr, "so: could not record run:", err)
 			res.Run = ""
 		}
+	} else {
+		// Recording is off, but runs recorded before that still expire.
+		history.Prune(history.Dir(), time.Now().Add(-cfg.Retention()))
 	}
 	if res.Anonymous && !*reveal {
 		res.Redact()
@@ -377,7 +385,7 @@ var (
 // readPrompt builds the prompt from arguments, stdin, and attached files.
 // Stdin is read only when there is no prompt argument, or the argument is
 // "-", so a so called inside a shell loop never swallows the loop's input.
-func readPrompt(args, files []string) (string, error) {
+func readPrompt(args, files []string, nonce string) (string, error) {
 	// Decided from the arguments themselves, not their text, so an empty
 	// argument (so ask "$q" with $q unset) never reads stdin.
 	useStdin := len(args) == 0 || args[len(args)-1] == "-"
@@ -407,7 +415,8 @@ func readPrompt(args, files []string) (string, error) {
 			if text == "" {
 				text = in
 			} else {
-				text += "\n\n<stdin>\n" + in + "\n</stdin>"
+				tag := gitctx.Tag("stdin", nonce)
+				text += "\n\n<" + tag + ">\n" + in + "\n</" + tag + ">"
 			}
 		}
 	}
@@ -421,7 +430,8 @@ func readPrompt(args, files []string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		fmt.Fprintf(&b, "\n\n<file path=%q>\n%s\n</file>", f, strings.TrimRight(string(data), "\n"))
+		tag := gitctx.Tag("file", nonce)
+		fmt.Fprintf(&b, "\n\n<%s path=%q>\n%s\n</%s>", tag, f, strings.TrimRight(string(data), "\n"), tag)
 	}
 	text = b.String()
 	if strings.TrimSpace(text) == "" {
@@ -637,6 +647,9 @@ func cmdDoctor(ctx context.Context, args []string) int {
 			v = "(version unknown)"
 		}
 		fmt.Printf("✓ %-7s %s  %s\n", name, path, v)
+		for _, k := range apiKeyVars(name, bc.Env) {
+			fmt.Printf("  ! %s is set; %s may bill that API account rather than your subscription\n", k, name)
+		}
 	}
 	if found == 0 {
 		return fail(errors.New("none of the supported CLIs (claude, codex, pi) are installed"))
@@ -745,11 +758,35 @@ func pingTargets(cfg *config.Config, profile string, with []string) ([]config.Pa
 	return targets, nil
 }
 
+// meteredKeys are the variables that switch a CLI from the user's
+// subscription to pay-per-use API billing. Panelists inherit the environment.
+var meteredKeys = map[string][]string{
+	"claude": {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"},
+	"codex":  {"CODEX_API_KEY", "OPENAI_API_KEY"},
+}
+
+// apiKeyVars lists the metered-billing variables a backend would see, from
+// the environment or its config env.
+func apiKeyVars(name string, env map[string]string) []string {
+	var set []string
+	for _, k := range meteredKeys[name] {
+		v, ok := env[k]
+		if !ok {
+			v = os.Getenv(k)
+		}
+		if v != "" {
+			set = append(set, k)
+		}
+	}
+	return set
+}
+
 // boundedOutput runs a command and returns at most 64 KB of its stdout. The
 // output goes through a writer rather than StdoutPipe, so os/exec owns the
 // copy and WaitDelay can close the pipe even if a grandchild holds it open.
 func boundedOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = os.TempDir() // not the caller's repository, which a CLI could act on at startup
 	cmd.WaitDelay = 2 * time.Second
 	out := &cappedWriter{limit: 64 << 10}
 	cmd.Stdout = out
@@ -991,12 +1028,23 @@ func cmdInit(args []string) int {
 	if _, err := os.Stat(*cfgPath); err == nil && !*force {
 		return fail(fmt.Errorf("%s already exists (use --force to overwrite)", *cfgPath))
 	}
-	if err := os.MkdirAll(filepath.Dir(*cfgPath), 0o755); err != nil {
+	// Private: [backends.*].env may hold credentials.
+	if err := os.MkdirAll(filepath.Dir(*cfgPath), 0o700); err != nil {
 		return fail(err)
 	}
-	if err := os.WriteFile(*cfgPath, []byte(assets.Defaults), 0o644); err != nil {
+	if err := os.WriteFile(*cfgPath, []byte(assets.Defaults), 0o600); err != nil {
+		return fail(err)
+	}
+	if err := os.Chmod(*cfgPath, 0o600); err != nil { // --force keeps the old mode otherwise
 		return fail(err)
 	}
 	fmt.Println("wrote", *cfgPath)
 	return 0
+}
+
+// newNonce returns 12 random hex digits.
+func newNonce() string {
+	b := make([]byte, 6)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }

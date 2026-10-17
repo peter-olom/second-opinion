@@ -72,8 +72,9 @@ so ask -w claude:opus@high -w pi:ollama/kimi-k2.7-code:cloud@high "..."   # ad-h
 so ask -p panel --format json "..."                                        # machine-readable
 ```
 
-Progress goes to stderr and the result to stdout. If some panelists fail, the run still succeeds with
-the ones that answered. The exit code is non-zero only when every panelist failed.
+The result goes to stdout. Progress goes to stderr when stderr is a terminal, or with `-v`. If some
+panelists fail, the run still succeeds with the ones that answered. The exit code is 1 when every
+panelist failed, and 130 when the run was interrupted, whatever had answered by then.
 
 ## Anonymous panels
 
@@ -96,7 +97,7 @@ therefore blind by default:
 
 ## When a model fails
 
-The other panelists still answer, and the exit code is non-zero only when every one fails. Each
+The other panelists still answer, and the exit code is 1 only when every one fails. Each
 failure gets a category and a suggested fix in the output (`error_kind` in JSON):
 
 | kind | meaning | what to do |
@@ -117,7 +118,8 @@ without naming either model (for example, "answered by fallback after 1 usage li
 Each run is saved privately to `~/.local/state/second-opinion/runs/<run-id>.json`, or under
 `$XDG_STATE_HOME`. Files are `0600` and the folder is `0700`. A record holds the prompt, the system
 prompts sent, every answer and error, timings, and which model was which panelist. The run ID
-appears at the top of every answer.
+appears at the top of the answer; if the record can't be saved, `so` says so on stderr and the
+answer has no run ID.
 
 ```bash
 so runs                          # recent runs: ID, profile, mode, how many answered, prompt
@@ -127,8 +129,8 @@ so runs show a3f9 --prompt       # include the exact prompt the panel received
 so runs show a3f9 --json         # the full record
 ```
 
-Runs older than 7 days are pruned whenever a new run is saved. Change that with `history_days`, or
-turn recording off with `history = false`. Records contain whatever you sent the panel, including
+Runs older than 7 days are pruned on every `so ask`. Change that with `history_days`, or turn
+recording off with `history = false` (runs recorded before that still expire). Records contain whatever you sent the panel, including
 code and diffs, so treat the folder accordingly.
 
 ## What panelists can see
@@ -144,7 +146,9 @@ The caller always writes the prompt. There are two ways to give the panel more c
   and the attachments, since their working copies may be decrypted. If there are too many changed
   files to check this, `--diff` stops rather than send a partial check. Untracked files are attached
   unless git ignores them, so add anything other tools leave in your working tree to `.gitignore` or
-  your global excludes. Limits: 1 MB of diff, 256 KB per file, 1.5 MB of files in total.
+  your global excludes. Limits: 1 MB of diff, 256 KB per file, 1.5 MB of files in total. This only
+  governs what is attached: with repository access (the default in `review`, `debug` and `audit`),
+  panelists can still read those decrypted working copies themselves. Add `--no-repo` to prevent that.
 - **`-f <file>` and stdin.** `-f` attaches a regular file of up to 1 MB. Stdin (up to 2 MB) is read
   only when there is no prompt argument, or when the arguments end with `-`:
   `git diff | so ask -m review "Review this" -`. If stdin is redirected from a file but not read,
@@ -156,6 +160,9 @@ The caller always writes the prompt. There are two ways to give the panel more c
   `--repo` turns it on for any mode and `--no-repo` turns it off. Inside a home-rooted repository,
   `--repo` gives the panel the current folder rather than all of `$HOME`, and refuses in `$HOME`
   itself.
+
+Attachments are wrapped in tags with a random per-run suffix (`<file-3f9a… path="…">`), so an
+attached file can't close its own block and pose as another file.
 
 Everything you send goes to the model providers in your profiles. Treat a prompt, its attachments,
 and (with repository access) whatever the panel reads as shared with them.
@@ -188,6 +195,13 @@ a repository did not run while a panel reviewed it.
 pi migrates files in its working directory when it starts. The one project-level migration in pi
 1.3 renames `.pi/commands/` to `.pi/prompts/`. In a repository where that would happen, `so` doesn't
 run the pi panelist at all, and it reports why. A later pi version could add migrations of its own.
+
+Panelists inherit your environment, as the CLIs need it to run and sign in. Codex runs commands
+with only core variables (`HOME`, `PATH`, …; `shell_environment_policy.inherit = "core"`), so its
+shell doesn't see your API keys and tokens. pi's `read` with repo access could read
+`/proc/self/environ` on Linux. If `ANTHROPIC_API_KEY` or `CODEX_API_KEY`/`OPENAI_API_KEY` is set,
+that CLI may bill the API account instead of your subscription; `so doctor` warns about it, and a
+backend's config `env` can clear it (`env = { ANTHROPIC_API_KEY = "" }`).
 
 These flags assume no overriding `args` in a `[backends.*]` section of your config: those are
 appended after `so`'s own flags, so they can undo the lockdown.
@@ -287,7 +301,8 @@ Modes ship inside the binary (`internal/assets/modes.toml`) and update with it:
 A mode has `instructions` and a `format` for panelists, plus optional `chair_instructions` and
 `chair_format` for the chair, and `repo` for default repository access. To customise a mode,
 override it in your config. Overrides apply **field by field**, so you set only what you want to
-change and the rest keeps tracking the built-in:
+change and the rest keeps tracking the built-in. An empty string counts as not set, so a field can't
+be cleared; set it to a single space instead.
 
 ```toml
 [modes.review]

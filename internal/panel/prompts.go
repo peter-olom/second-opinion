@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/peter-olom/second-opinion/internal/config"
 )
@@ -117,7 +118,23 @@ func ChairPrompt(request string, opinions []Opinion) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "<request-%s>\n%s\n</request-%s>\n", nonce, strings.TrimSpace(request), nonce)
 	for _, o := range opinions {
-		fmt.Fprintf(&out, "\n<response-%s panelist=%q>\n%s\n</response-%s>\n", nonce, o.Label, strings.TrimSpace(o.Output), nonce)
+		fmt.Fprintf(&out, "\n<response-%s panelist=%q>\n%s\n</response-%s>\n", nonce, o.Label, clip(strings.TrimSpace(o.Output), maxChairResponse), nonce)
 	}
 	return out.String()
+}
+
+// maxChairResponse bounds each panelist's answer in the chair's prompt, so one
+// runaway answer can't push the chair past its context window. Real answers
+// are far smaller.
+const maxChairResponse = 256 << 10
+
+// clip cuts s to at most n bytes on a rune boundary, and says so.
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n] + fmt.Sprintf("\n[… cut here: the full answer is %d bytes]", len(s))
 }

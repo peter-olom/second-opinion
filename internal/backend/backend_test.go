@@ -61,6 +61,9 @@ func TestLeftoverHelpersAreKilled(t *testing.T) {
 	}
 	data, _ := os.ReadFile(pidFile)
 	pid := strings.TrimSpace(string(data))
+	if atoi(pid) <= 0 {
+		t.Fatalf("no helper PID recorded (%q)", pid)
+	}
 	time.Sleep(200 * time.Millisecond)
 	if out, _ := os.ReadFile("/proc/" + pid + "/stat"); len(out) > 0 && !strings.Contains(string(out), " Z ") {
 		t.Errorf("helper %s still running after the CLI exited", pid)
@@ -293,7 +296,7 @@ cat >/dev/null; echo ok > "$out"`)
 		if ws != "" {
 			cwd = ws
 		}
-		for _, want := range []string{"--sandbox\nread-only\n", "--ignore-user-config\n", "--ignore-rules\n", "--ephemeral\n", "--cd\n" + cwd + "\n", "--disable\napps\n", `web_search="disabled"`} {
+		for _, want := range []string{"--sandbox\nread-only\n", "--ignore-user-config\n", "--ignore-rules\n", "--ephemeral\n", "--cd\n" + cwd + "\n", "--disable\napps\n", `web_search="disabled"`, `shell_environment_policy.inherit="core"`} {
 			if !strings.Contains(args, want) {
 				t.Errorf("workspace %q: missing %q in:\n%s", ws, want, args)
 			}
@@ -401,5 +404,17 @@ func TestCodexDiscoveryKeepsCancellation(t *testing.T) {
 	_, err := codexFeatures(ctx, Options{Command: cli})
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("err = %v, want it to wrap context.Canceled", err)
+	}
+}
+
+func TestCodexDiscoveryTimeoutIsATimeout(t *testing.T) {
+	codexFeatureList = featureCache{}
+	t.Cleanup(func() { codexFeatureList = featureCache{} })
+	cli := script(t, "sleep 30\n")
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	_, err := codexFeatures(ctx, Options{Command: cli})
+	if !errors.Is(err, ErrTimeout) {
+		t.Errorf("err = %v, want it to wrap ErrTimeout", err)
 	}
 }

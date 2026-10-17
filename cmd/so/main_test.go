@@ -6,11 +6,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/peter-olom/second-opinion/internal/backend"
 	"github.com/peter-olom/second-opinion/internal/config"
+	"github.com/peter-olom/second-opinion/internal/history"
 )
 
 func TestAskRefusesInsidePanelist(t *testing.T) {
@@ -102,6 +105,7 @@ func TestSkillInstall(t *testing.T) {
 }
 
 func TestAskWithoutProfilesExplainsSetup(t *testing.T) {
+	unsetEnv(t, backend.EnvGuard)
 	cfg := filepath.Join(t.TempDir(), "config.toml")
 	stderr := captureStderr(t, func() {
 		if code := run(context.Background(), []string{"ask", "--config", cfg, "hello"}); code != 1 {
@@ -123,14 +127,19 @@ func captureStderr(t *testing.T, fn func()) string {
 	}
 	orig := os.Stderr
 	os.Stderr = w
+	done := make(chan string)
+	go func() {
+		out, _ := io.ReadAll(r)
+		done <- string(out)
+	}()
 	fn()
 	os.Stderr = orig
 	w.Close()
-	out, _ := io.ReadAll(r)
-	return string(out)
+	return <-done
 }
 
 func TestAskRecordsRunAndRevealsLater(t *testing.T) {
+	unsetEnv(t, backend.EnvGuard)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "fake-pi")
@@ -205,4 +214,82 @@ func loadConfigForTest(t *testing.T, path string) *config.Config {
 		t.Fatal(err)
 	}
 	return cfg
+}
+
+func TestAskPrunesOldRunsWithRecordingOff(t *testing.T) {
+	unsetEnv(t, backend.EnvGuard)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	runs := history.Dir()
+	if err := os.MkdirAll(runs, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(runs, "20200101-000000-0badc0de.json")
+	if err := os.WriteFile(old, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "fake-pi")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\ncat >/dev/null\necho ok\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(dir, "config.toml")
+	toml := "history = false\n\n[backends.pi]\ncommand = \"" + fake + "\"\n"
+	if err := os.WriteFile(cfg, []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	captureStdout(t, func() {
+		if code := run(context.Background(), []string{"ask", "--config", cfg, "--no-repo", "-q", "-w", "pi:m", "q"}); code != 0 {
+			t.Fatalf("ask exit code = %d", code)
+		}
+	})
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Errorf("an expired run survived with recording off: %v", err)
+	}
+	if entries, _ := os.ReadDir(runs); len(entries) != 0 {
+		t.Errorf("recording is off, but the folder holds %d runs", len(entries))
+	}
+}
+
+func TestInitWritesAPrivateConfig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no Unix permissions")
+	}
+	cfg := filepath.Join(t.TempDir(), "so", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	captureStdout(t, func() {
+		if code := run(context.Background(), []string{"init", "--config", cfg, "--force"}); code != 0 {
+			t.Fatalf("init exit code = %d", code)
+		}
+	})
+	info, err := os.Stat(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("config mode = %v, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestAPIKeyVars(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+	t.Setenv("CODEX_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	if got := apiKeyVars("claude", nil); !slices.Equal(got, []string{"ANTHROPIC_API_KEY"}) {
+		t.Errorf("claude = %v", got)
+	}
+	if got := apiKeyVars("claude", map[string]string{"ANTHROPIC_API_KEY": ""}); len(got) != 0 {
+		t.Errorf("a config env that clears the key should win: %v", got)
+	}
+	if got := apiKeyVars("codex", map[string]string{"CODEX_API_KEY": "k"}); !slices.Equal(got, []string{"CODEX_API_KEY"}) {
+		t.Errorf("codex = %v", got)
+	}
+	if got := apiKeyVars("pi", nil); len(got) != 0 {
+		t.Errorf("pi = %v; its provider keys are how it works", got)
+	}
 }

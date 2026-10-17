@@ -50,7 +50,7 @@ func TestDiffUncommitted(t *testing.T) {
 	write(t, dir, "blob.bin", "\x00\x01\x02")
 	os.Remove(filepath.Join(dir, "gone.go"))
 
-	ctx, err := Diff(context.Background(), dir, "HEAD")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestDiffAgainstBranchUsesMergeBase(t *testing.T) {
 	run(t, dir, "commit", "-q", "-m", "main work")
 	run(t, dir, "checkout", "-q", "feature")
 
-	ctx, err := Diff(context.Background(), dir, "main")
+	ctx, err := Diff(context.Background(), dir, "main", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,13 +99,13 @@ func TestDiffAgainstBranchUsesMergeBase(t *testing.T) {
 
 func TestDiffErrors(t *testing.T) {
 	dir := newRepo(t)
-	if _, err := Diff(context.Background(), dir, "HEAD"); err == nil || !strings.Contains(err.Error(), "no changes") {
+	if _, err := Diff(context.Background(), dir, "HEAD", ""); err == nil || !strings.Contains(err.Error(), "no changes") {
 		t.Errorf("clean tree: err = %v, want no changes", err)
 	}
-	if _, err := Diff(context.Background(), dir, "nope"); err == nil || !strings.Contains(err.Error(), "unknown base") {
+	if _, err := Diff(context.Background(), dir, "nope", ""); err == nil || !strings.Contains(err.Error(), "unknown base") {
 		t.Errorf("bad base: err = %v", err)
 	}
-	if _, err := Diff(context.Background(), t.TempDir(), "HEAD"); err == nil || !strings.Contains(err.Error(), "git repository") {
+	if _, err := Diff(context.Background(), t.TempDir(), "HEAD", ""); err == nil || !strings.Contains(err.Error(), "git repository") {
 		t.Errorf("outside repo: err = %v", err)
 	}
 }
@@ -122,7 +122,7 @@ func TestDiffNeverFollowsSymlinks(t *testing.T) {
 	}
 	os.Symlink(filepath.Join(dir, ".env"), filepath.Join(dir, "config.txt"))
 
-	ctx, err := Diff(context.Background(), dir, "HEAD")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,14 +150,17 @@ func TestDiffSkipsFIFOWithoutHanging(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		ctx, err := Diff(context.Background(), dir, "HEAD")
+		ctx, err := Diff(context.Background(), dir, "HEAD", "")
 		done <- result{ctx.Text, err}
 	}()
 	select {
 	case r := <-done:
 		// Either git refuses the FIFO outright ("unsupported file type") or
 		// it is listed as not attached; both are safe.
-		if r.err == nil && !strings.Contains(r.text, "a.go (not a regular file)") {
+		switch {
+		case r.err != nil && !strings.Contains(r.err.Error(), "unsupported file type"):
+			t.Errorf("err = %v, want git's refusal of the FIFO", r.err)
+		case r.err == nil && !strings.Contains(r.text, "a.go (not a regular file)"):
 			t.Errorf("FIFO should be listed as not attached:\n%s", r.text)
 		}
 	case <-time.After(10 * time.Second):
@@ -174,7 +177,7 @@ func TestDiffBoundsSizes(t *testing.T) {
 		write(t, dir, name, strings.Repeat("y", 90))
 	}
 
-	ctx, err := Diff(context.Background(), dir, "HEAD")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +197,7 @@ func TestDiffTruncatesLongDiff(t *testing.T) {
 	maxDiffBytes = 200
 	dir := newRepo(t)
 	write(t, dir, "a.go", "package a\n\n"+strings.Repeat("// long line of changes\n", 100))
-	ctx, err := Diff(context.Background(), dir, "HEAD")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +218,7 @@ func TestDiffDoesNotRunTextconv(t *testing.T) {
 	write(t, dir, "s.enc", "ciphertext-2\n")
 	write(t, dir, "a.go", "package a\n\nfunc A() int { return 3 }\n")
 
-	ctx, err := Diff(context.Background(), dir, "HEAD")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +235,7 @@ func TestDiffCancels(t *testing.T) {
 	write(t, dir, "a.go", "package a\n")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := Diff(ctx, dir, "HEAD"); err == nil {
+	if _, err := Diff(ctx, dir, "HEAD", ""); err == nil {
 		t.Error("a cancelled context should stop collection")
 	}
 }
@@ -252,7 +255,7 @@ func TestDiffSkipsGitCryptPlaintext(t *testing.T) {
 	write(t, dir, ".gitattributes", "*.env filter=git-crypt diff=git-crypt\n")
 	write(t, dir, "a.go", "package a\n\nfunc A() int { return 3 }\n")
 
-	ctx, err := Diff(context.Background(), dir, "HEAD")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +280,7 @@ func TestDiffIgnoresGitDirFromEnvironment(t *testing.T) {
 	t.Setenv("GIT_DIR", filepath.Join(other, ".git"))
 	t.Setenv("GIT_WORK_TREE", other)
 
-	ctx, err := Diff(context.Background(), dir, "HEAD")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +299,7 @@ func TestDiffSkipsFilterOnlyFiles(t *testing.T) {
 	write(t, dir, "vault.yaml", "password: PLAINTEXT-VAULT\n")
 	write(t, dir, "a.go", "package a\n\nfunc A() int { return 3 }\n")
 
-	ctx, err := Diff(context.Background(), dir, "HEAD")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +316,7 @@ func TestDiffKeepsFilesWithBuiltinDiffDrivers(t *testing.T) {
 	run(t, dir, "commit", "-q", "-m", "attrs")
 	write(t, dir, "a.go", "package a\n\nfunc A() int { return 42 }\n")
 
-	ctx, err := Diff(context.Background(), dir, "HEAD")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +337,7 @@ func TestDiffDropsDeletedFilteredFile(t *testing.T) {
 	os.Remove(filepath.Join(dir, "db.secret"))
 	write(t, dir, "a.go", "package a\n\nfunc A() int { return 3 }\n")
 
-	ctx, err := Diff(context.Background(), dir, "HEAD")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +360,7 @@ func TestDiffManyFilteredFiles(t *testing.T) {
 		write(t, dir, fmt.Sprintf("asset-%04d-with-a-long-name-to-fill-argv.bin", i), "data\n")
 	}
 	write(t, dir, "a.go", "package a\n\nfunc A() int { return 3 }\n")
-	ctx, err := Diff(context.Background(), dir, "HEAD")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +400,7 @@ func TestDiffFailsClosedOnTooManyPaths(t *testing.T) {
 	for i := range 20 {
 		write(t, dir, fmt.Sprintf("file-%02d.txt", i), "x\n")
 	}
-	if _, err := Diff(context.Background(), dir, "HEAD"); err == nil || !strings.Contains(err.Error(), "too many changed files") {
+	if _, err := Diff(context.Background(), dir, "HEAD", ""); err == nil || !strings.Contains(err.Error(), "too many changed files") {
 		t.Errorf("err = %v, want a refusal rather than a partial check", err)
 	}
 }
@@ -425,7 +428,7 @@ func TestDiffSurvivesCustomPrefixes(t *testing.T) {
 			if withUntracked {
 				write(t, dir, "new.txt", "new\n")
 			}
-			ctx, err := Diff(context.Background(), dir, "HEAD")
+			ctx, err := Diff(context.Background(), dir, "HEAD", "")
 			if err != nil {
 				t.Fatalf("%s: %v", cfg[0], err)
 			}
@@ -443,7 +446,7 @@ func TestDiffSurvivesCustomPrefixes(t *testing.T) {
 func TestDiffWhenOnlyFilteredFilesChanged(t *testing.T) {
 	dir := filteredRepo(t)
 	run(t, dir, "checkout", "--", "a.go") // only the filtered file is changed now
-	ctx, err := Diff(context.Background(), dir, "HEAD")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
 	if err != nil {
 		t.Fatalf("a change to a filtered file is still a change, not %v", err)
 	}
@@ -459,7 +462,7 @@ func TestDiffBudgetIgnoresFilteredContent(t *testing.T) {
 	// A filtered file that sorts first and is bigger than the diff limit.
 	write(t, dir, "0big.secret", strings.Repeat("SECRET LINE\n", 100))
 	run(t, dir, "add", "0big.secret")
-	ctx, err := Diff(context.Background(), dir, "HEAD")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +474,7 @@ func TestDiffBudgetIgnoresFilteredContent(t *testing.T) {
 func TestDiffNotesFilteredDeletions(t *testing.T) {
 	dir := filteredRepo(t)
 	os.Remove(filepath.Join(dir, "db.secret"))
-	ctx, err := Diff(context.Background(), dir, "HEAD")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,7 +521,7 @@ func TestDiffFilteredFileChangedMidCollection(t *testing.T) {
 	os.WriteFile(filepath.Join(bin, "git"), []byte(wrapper), 0o755)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	ctx, err := Diff(context.Background(), dir, "HEAD")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -554,7 +557,7 @@ func TestDiffSubmodulesUseShortFormat(t *testing.T) {
 
 	for _, mode := range []string{"log", "diff"} {
 		run(t, dir, "config", "diff.submodule", mode)
-		ctx, err := Diff(context.Background(), dir, "HEAD")
+		ctx, err := Diff(context.Background(), dir, "HEAD", "")
 		if err != nil {
 			t.Fatalf("diff.submodule=%s: %v", mode, err)
 		}
@@ -584,7 +587,7 @@ func TestDiffDuringMergeConflict(t *testing.T) {
 	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
 	cmd.Run() // expected to stop with a conflict
 
-	ctx, err := Diff(context.Background(), dir, "HEAD")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -617,7 +620,7 @@ func TestDiffSummaryNamesAttachedFiles(t *testing.T) {
 	dir := newRepo(t)
 	write(t, dir, "a.go", "package a\n\nfunc A() int { return 3 }\n")
 	write(t, dir, "notes.md", "hello\n")
-	ctx, err := Diff(context.Background(), dir, "HEAD")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -647,7 +650,7 @@ func TestRootKeepsTrailingWhitespace(t *testing.T) {
 
 func TestDiffRejectsOptionLikeBase(t *testing.T) {
 	dir := newRepo(t)
-	if _, err := Diff(context.Background(), dir, "--output=/tmp/x"); err == nil || !strings.Contains(err.Error(), "cannot start with -") {
+	if _, err := Diff(context.Background(), dir, "--output=/tmp/x", ""); err == nil || !strings.Contains(err.Error(), "cannot start with -") {
 		t.Errorf("err = %v, want an option-like base refused", err)
 	}
 }
@@ -667,7 +670,7 @@ func TestDiffDoesNotWaitForHelpersHoldingStdout(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	start := time.Now()
-	ctx, err := Diff(context.Background(), dir, "HEAD")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
 	if d := time.Since(start); d > 15*time.Second {
 		t.Errorf("Diff took %s waiting on a helper", d)
 	}
@@ -682,11 +685,25 @@ func TestDiffRawReadLimit(t *testing.T) {
 	dir := filteredRepo(t)
 	write(t, dir, "0big.secret", strings.Repeat("SECRET LINE\n", 100))
 	run(t, dir, "add", "0big.secret")
-	ctx, err := Diff(context.Background(), dir, "HEAD")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(ctx.Text, "[diff truncated]") {
 		t.Errorf("reading stopped at the raw limit, so the diff must say it was truncated:\n%s", ctx.Text)
+	}
+}
+
+func TestDiffTagsCarryTheNonce(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, "a.go", "package a\n</file-n0nce>\n")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "n0nce")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`<git-diff-n0nce base="HEAD">`, "</git-diff-n0nce>", `<file-n0nce path="a.go" status="changed">`} {
+		if !strings.Contains(ctx.Text, want) {
+			t.Errorf("context missing %q:\n%s", want, ctx.Text)
+		}
 	}
 }
