@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -390,6 +391,9 @@ func TestDiffSkipsFilterOnlyFiles(t *testing.T) {
 	}
 	if strings.Contains(ctx.Text, "PLAINTEXT-VAULT") {
 		t.Errorf("filter-only file was sent:\n%s", ctx.Text)
+	}
+	if !strings.Contains(ctx.Text, "vault.yaml (git filter; may be encrypted)") || !strings.Contains(ctx.Text, "func A() int { return 3 }") {
+		t.Errorf("the vault should be listed as left out, and a.go attached:\n%s", ctx.Text)
 	}
 }
 
@@ -929,10 +933,33 @@ func TestFilterDriversNeverRunWithGitConfigSet(t *testing.T) {
 }
 
 func TestGitNeverPromptsOrFetches(t *testing.T) {
-	env := strings.Join(gitEnv(), "\n")
-	for _, want := range []string{"GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1"} {
-		if !strings.Contains(env, want) {
-			t.Errorf("git's environment lacks %s", want)
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a shell wrapper for git")
+	}
+	dir := newRepo(t)
+	write(t, dir, "a.go", "package a\n")
+	write(t, dir, ".gitattributes", "*.x filter=f\n")
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A git that logs, for every call, whether both settings reached it.
+	bin := t.TempDir()
+	logFile := filepath.Join(bin, "env")
+	wrapper := "#!/bin/sh\necho \"$1 $GIT_TERMINAL_PROMPT $GIT_NO_LAZY_FETCH\" >> " + logFile + "\nexec " + realGit + " \"$@\"\n"
+	os.WriteFile(filepath.Join(bin, "git"), []byte(wrapper), 0o755)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if _, err := Diff(context.Background(), dir, "HEAD", ""); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(logFile)
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) < 4 {
+		t.Fatalf("only %d git calls logged:\n%s", len(lines), data)
+	}
+	for _, l := range lines {
+		if !strings.HasSuffix(l, " 0 1") {
+			t.Errorf("a git call ran without GIT_TERMINAL_PROMPT=0 and GIT_NO_LAZY_FETCH=1: %q", l)
 		}
 	}
 }
@@ -1020,5 +1047,43 @@ func TestRootRefusesAWorkTreeElsewhere(t *testing.T) {
 	run(t, parent, "-c", "protocol.file.allow=always", "submodule", "add", "-q", other, "mod")
 	if _, err := Root(context.Background(), filepath.Join(parent, "mod")); err != nil {
 		t.Errorf("a submodule: %v", err)
+	}
+}
+
+func TestDiffLeavesOutHarnessState(t *testing.T) {
+	dir := newRepo(t)
+	os.MkdirAll(filepath.Join(dir, ".specstory", "history"), 0o755)
+	write(t, dir, ".specstory/history/s.md", "old transcript\n")
+	run(t, dir, "add", ".")
+	run(t, dir, "commit", "-q", "-m", "history")
+	write(t, dir, ".specstory/history/s.md", "TRANSCRIPT-SECRET tracked\n")
+	os.MkdirAll(filepath.Join(dir, "pkg"), 0o755)
+	write(t, dir, "pkg/.aider.chat.history.md", "TRANSCRIPT-SECRET untracked\n")
+	write(t, dir, "a.go", "package a // ordinary change\n")
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ctx.Text, "TRANSCRIPT-SECRET") {
+		t.Errorf("harness state was sent:\n%s", ctx.Text)
+	}
+	for _, want := range []string{".specstory/history/s.md (agent-harness state; not attached)", "pkg/.aider.chat.history.md (agent-harness state; not attached)", "ordinary change"} {
+		if !strings.Contains(ctx.Text, want) {
+			t.Errorf("missing %q:\n%s", want, ctx.Text)
+		}
+	}
+}
+
+func TestHarnessPathsFindsNestedState(t *testing.T) {
+	dir := newRepo(t)
+	os.MkdirAll(filepath.Join(dir, "packages", "app", ".recallstack"), 0o755)
+	write(t, dir, "packages/app/.recallstack/s.json", "x")
+	write(t, dir, ".gitignore", ".recallstack/\n") // ignored, and still found
+	got, err := HarnessPaths(context.Background(), dir, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got, "packages/app/.recallstack") {
+		t.Errorf("HarnessPaths = %q, want the nested .recallstack", got)
 	}
 }

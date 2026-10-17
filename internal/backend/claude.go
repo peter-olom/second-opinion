@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/peter-olom/second-opinion/internal/harness"
 )
 
 // claude runs Claude Code in print mode with no MCP servers, settings, or session.
@@ -37,9 +39,11 @@ func (c claude) Run(ctx context.Context, req Request) (string, error) {
 		// Agent harnesses keep session state in the repository; it isn't
 		// part of the code under review. (Read rules cover Grep and Glob
 		// too; verified with Claude Code 2.1.)
-		var deny []string
-		for _, p := range HarnessState {
-			deny = append(deny, "Read(./"+p+")", "Read(./"+p+"/**)")
+		// The repository's .git too: claude has no shell to need it, and it
+		// can hold credentialed remote URLs and secrets removed from HEAD.
+		deny := []string{"Read(./.git)", "Read(./.git/**)", "Read(**/.git/**)"}
+		for _, p := range harness.Names {
+			deny = append(deny, "Read(./"+p+")", "Read(./"+p+"/**)", "Read(**/"+p+")", "Read(**/"+p+"/**)")
 		}
 		rules, _ := json.Marshal(map[string]any{"permissions": map[string]any{"deny": deny}})
 		args = append(args, "--settings", string(rules))

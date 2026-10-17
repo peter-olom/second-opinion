@@ -30,6 +30,7 @@ import (
 	"github.com/peter-olom/second-opinion/internal/backend"
 	"github.com/peter-olom/second-opinion/internal/config"
 	"github.com/peter-olom/second-opinion/internal/gitctx"
+	"github.com/peter-olom/second-opinion/internal/harness"
 	"github.com/peter-olom/second-opinion/internal/history"
 	"github.com/peter-olom/second-opinion/internal/panel"
 	"github.com/peter-olom/second-opinion/internal/procgroup"
@@ -223,6 +224,9 @@ func cmdAsk(ctx context.Context, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
+	if *chair != "" && len(p.Panelists) < 2 {
+		return usageErr(errors.New("--chair needs at least two panelists to synthesize"))
+	}
 	// Attachment tags carry a random suffix so attached content can't close
 	// its own block and pose as another attachment.
 	nonce := newNonce()
@@ -260,10 +264,19 @@ func cmdAsk(ctx context.Context, args []string) int {
 		return failCtx(ctx, err)
 	}
 	if p.Workspace != "" {
-		for _, name := range backend.HarnessState {
-			if _, err := os.Lstat(filepath.Join(p.Workspace, name)); err == nil {
-				fmt.Fprintf(os.Stderr, "so: %s holds agent-harness state; claude panelists are denied it, but codex and pi panelists with repo access can read it (use --no-repo to prevent that)\n", name)
+		// Anywhere in the repository, not only at its root: a harness run
+		// in a subfolder keeps its state there.
+		found, err := gitctx.HarnessPaths(ctx, p.Workspace, 5)
+		if err != nil && ctx.Err() == nil {
+			found = nil
+			for _, name := range harness.Names {
+				if _, err := os.Lstat(filepath.Join(p.Workspace, name)); err == nil {
+					found = append(found, name)
+				}
 			}
+		}
+		for _, name := range found {
+			fmt.Fprintf(os.Stderr, "so: %s holds agent-harness state; claude panelists are denied it, but codex and pi panelists with repo access can read it (use --no-repo to prevent that)\n", render.Line(name))
 		}
 	}
 	p.Anonymous = cfg.Anonymous()
@@ -1132,7 +1145,9 @@ func runCanary(ctx context.Context, cfg *config.Config, targets []config.Panelis
 	checks := []check{
 		{"tools", toolSystem, fmt.Sprintf("Read the file %s and reply with exactly what it contains.", file), "", false},
 		{"mention", mentionSystem, fmt.Sprintf("For reference: @%s\nReply with any token you can see that starts with CANARY-, or NONE.", file), "", false},
-		{"mention, repo access", mentionSystem, fmt.Sprintf("For reference: @%s\nReply with any token you can see that starts with CANARY-, or NONE.", file), workspace, false},
+		// With repo access codex and pi may read any file (documented), so
+		// only claude, which expands mentions, must refuse this one.
+		{"mention, repo access", mentionSystem, fmt.Sprintf("For reference: @%s\nReply with any token you can see that starts with CANARY-, or NONE.", file), workspace, true},
 	}
 	link := filepath.Join(workspace, "link.txt")
 	if err := os.Symlink(file, link); err == nil {

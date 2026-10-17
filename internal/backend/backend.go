@@ -23,11 +23,6 @@ import (
 	"github.com/peter-olom/second-opinion/internal/procgroup"
 )
 
-// HarnessState lists files and folders where agent harnesses keep session
-// state (summaries, transcript paths) inside a repository. claude panelists
-// are denied them with repo access; codex and pi can't be, so so warns.
-var HarnessState = []string{".recallstack", ".specstory", ".aider.chat.history.md", ".aider.input.history"}
-
 // ErrTimeout is returned when a CLI exceeds its deadline.
 var ErrTimeout = errors.New("timed out")
 

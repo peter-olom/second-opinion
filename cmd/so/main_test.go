@@ -645,14 +645,27 @@ func TestDiffRefusesDotFolderReposUnlessConfirmed(t *testing.T) {
 	if !strings.Contains(stderr, "dot-folder") {
 		t.Errorf("stderr = %q, want the dot-folder refusal", stderr)
 	}
-	// --no-repo confirms it without granting read access.
+	// --no-repo confirms it without granting read access: the diff goes
+	// to the panelist, which runs in its scratch folder, not the repo.
+	fakeDir := t.TempDir()
+	fake := filepath.Join(fakeDir, "pi")
+	got := filepath.Join(fakeDir, "got")
+	os.WriteFile(fake, []byte("#!/bin/sh\npwd > "+got+".cwd\ncat > "+got+"\necho ok\n"), 0o755)
+	cfg := filepath.Join(fakeDir, "config.toml")
+	os.WriteFile(cfg, []byte(stubOtherBackends+"[backends.pi]\ncommand = \""+fake+"\"\n"), 0o644)
+	var code int
 	stderr = captureStderr(t, func() {
 		captureStdout(t, func() {
-			run(context.Background(), []string{"ask", "--config", fakePiConfig(t), "--diff", "--no-repo", "-w", "pi:x", "q"})
+			code = run(context.Background(), []string{"ask", "--config", cfg, "--diff", "--no-repo", "-w", "pi:x", "q"})
 		})
 	})
-	if strings.Contains(stderr, "dot-folder") {
-		t.Errorf("--diff --no-repo should be accepted as confirmation: %q", stderr)
+	prompt, _ := os.ReadFile(got)
+	cwd, _ := os.ReadFile(got + ".cwd")
+	if code != 0 || strings.Contains(stderr, "dot-folder") || !strings.Contains(string(prompt), "oauth_token: SECRET") {
+		t.Errorf("--diff --no-repo should collect the confirmed diff: exit %d, stderr %q, prompt:\n%s", code, stderr, prompt)
+	}
+	if strings.HasPrefix(strings.TrimSpace(string(cwd)), repo) {
+		t.Errorf("with --no-repo the panelist ran in the repository (%s)", cwd)
 	}
 }
 
@@ -691,5 +704,49 @@ printf '{"type":"result","subtype":"success","result":"saw %s"}\n' "$content"
 	}
 	if code != 0 {
 		t.Errorf("exit %d, want 0 with mentions defused:\n%s", code, out)
+	}
+}
+
+func TestAskWarnsAboutNestedHarnessState(t *testing.T) {
+	unsetEnv(t, backend.EnvGuard)
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	os.MkdirAll(filepath.Join(repo, "packages", "app", ".recallstack"), 0o755)
+	os.WriteFile(filepath.Join(repo, "packages", "app", ".recallstack", "s.json"), []byte("x"), 0o600)
+	t.Chdir(filepath.Join(repo, "packages", "app"))
+	stderr := captureStderr(t, func() {
+		captureStdout(t, func() {
+			run(context.Background(), []string{"ask", "--config", fakePiConfig(t), "--repo", "-w", "pi:x", "q"})
+		})
+	})
+	if !strings.Contains(stderr, "packages/app/.recallstack holds agent-harness state") {
+		t.Errorf("stderr = %q, want the nested harness warning", stderr)
+	}
+}
+
+func TestCanaryCatchesAToolRead(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script")
+	}
+	dir := t.TempDir()
+	// A claude whose tools read any path named in the prompt.
+	fake := filepath.Join(dir, "claude")
+	os.WriteFile(fake, []byte(`#!/bin/sh
+prompt=$(cat)
+f=$(printf '%s' "$prompt" | grep -oE '/[^[:space:]]*(canary|link)\.txt' | head -1)
+content=""
+[ -n "$f" ] && content=$(cat "$f")
+printf '{"type":"result","subtype":"success","result":"%s"}\n' "$content"
+`), 0o755)
+	cfgPath := filepath.Join(dir, "config.toml")
+	os.WriteFile(cfgPath, []byte("[backends.claude]\ncommand = \""+fake+"\"\n[backends.codex]\ncommand = \"/nonexistent/c\"\n[backends.pi]\ncommand = \"/nonexistent/p\"\n"), 0o644)
+	var code int
+	out := captureStdout(t, func() {
+		code = run(context.Background(), []string{"doctor", "--canary", "--config", cfgPath, "-w", "claude:x"})
+	})
+	if code != 1 || !strings.Contains(out, "✗ claude:x (tools, repo access): READ A FILE OUTSIDE ITS FOLDER") {
+		t.Errorf("a claude that reads through the symlink must fail the canary: exit %d\n%s", code, out)
 	}
 }

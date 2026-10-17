@@ -184,7 +184,9 @@ The caller always writes the prompt. There are two ways to give the panel more c
   `git diff | so ask -m review "Review this" -`. If stdin is redirected from a file but not read,
   `so` says so. The whole prompt is capped at 6 MB.
 - **Repository access** runs the panel and the chair in the repository root with read-only tools,
-  so they can read callers, definitions, and tests, including ignored files such as `.env`. The
+  so they can read callers, definitions, and tests, including ignored files such as `.env`, and
+  for codex and pi also `.git` (remote URLs with any embedded credentials, and history, including
+  secrets since removed from HEAD; claude panelists are denied `.git`). The
   `review`, `debug` and `audit` modes enable it by default (`repo = true` in the mode), but only inside a git
   repository that isn't rooted at your home directory (a dotfiles repo in `~` doesn't count).
   `--repo` turns it on for any mode and `--no-repo` turns it off. Inside a home-rooted repository,
@@ -284,7 +286,7 @@ runs four checks per model, each configured exactly as a panelist: two ask it to
 any tool it has, without repo access and with repo access through a symlink in the workspace (only
 claude must refuse that one; codex and pi can read any file with repo access, so for them it is
 reported, not failed), and two name the file in an `@` mention, the way claude would expand it,
-without and with repo access. A ✓ means it did not read the file on that
+without and with repo access (with repo access, again only claude must refuse). A ✓ means it did not read the file on that
 run, which is evidence rather than proof. In testing, a Codex panelist with this lockdown didn't read the file in
 10 of 10 runs, while the same check caught an unlocked Codex every time.
 
@@ -359,7 +361,8 @@ A fallback can be a model already on the panel; the panel then has two seats for
 fallbacks from a provider not already in that profile.
 
 If you leave out `model`, the CLI uses its own default. `effort` is passed to the CLI's effort or
-thinking setting. Claude and Codex accept `low` to `max`, and pi also accepts `off` and `minimal`.
+thinking setting. Claude and Codex accept `low` to `max` (`off`, `none` and `minimal` run as `low`
+there), and pi also accepts `off` and `minimal` (`none` runs as `off`).
 
 ```bash
 so profiles                                   # list profiles (validates the config)

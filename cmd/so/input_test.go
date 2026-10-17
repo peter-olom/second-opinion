@@ -224,8 +224,12 @@ func TestCanaryReportsWhatModelsCanRead(t *testing.T) {
 			t.Errorf("%s: exit %d, output:\n%s\nwant exit %d and %s for the tools check", name, code, out, tc.code, tc.mark)
 		}
 		// pi may read any file with repo access: reported, not failed.
-		if name == "reads" && !strings.Contains(out, "- pi:fake (tools, repo access): read the file, as pi can") {
-			t.Errorf("reads: the repo-access read should be reported as expected for pi:\n%s", out)
+		if name == "reads" {
+			for _, check := range []string{"tools, repo access", "mention, repo access"} {
+				if !strings.Contains(out, "- pi:fake ("+check+"): read the file, as pi can") {
+					t.Errorf("reads: the %s read should be reported as expected for pi:\n%s", check, out)
+				}
+			}
 		}
 	}
 }
@@ -437,6 +441,7 @@ func TestUsageErrorsExit2(t *testing.T) {
 		{"-w", "pi:a", "-w", "pi:b", "--chair", "pi:c", "--no-chair"},
 		{"-q", "-v"},
 		{"-w", "cladue:opus"},
+		{"-w", "pi:a", "--chair", "pi:c"},
 	} {
 		argv := append(append([]string{"ask", "--config", fakePiConfig(t)}, args...), "q")
 		captureStderr(t, func() {

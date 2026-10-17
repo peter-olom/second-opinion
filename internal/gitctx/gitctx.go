@@ -24,6 +24,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/peter-olom/second-opinion/internal/harness"
 	"github.com/peter-olom/second-opinion/internal/procgroup"
 )
 
@@ -253,7 +254,19 @@ func Diff(ctx context.Context, dir, base, nonce string) (Context, error) {
 	for _, p := range inDiff {
 		checked[p] = true
 	}
-	sections := &sectionFilter{checked: checked, drop: filtered}
+	// Agent-harness state (conversation history and the like) is dropped
+	// from the diff and the attachments like a filtered file.
+	harnessState := map[string]bool{}
+	drop := map[string]bool{}
+	for p := range filtered {
+		drop[p] = true
+	}
+	for _, p := range all {
+		if harness.Contains(p) {
+			harnessState[p], drop[p] = true, true
+		}
+	}
+	sections := &sectionFilter{checked: checked, drop: drop}
 	var kept strings.Builder
 	diffTruncated, err := gitLines(ctx, root, maxRawDiffBytes, func(line string) bool {
 		if sections.keepLine(line) {
@@ -292,11 +305,19 @@ func Diff(ctx context.Context, dir, base, nonce string) (Context, error) {
 		isChanged[p] = true
 	}
 	for _, p := range inDiff {
-		if filtered[p] && !isChanged[p] {
+		switch {
+		case isChanged[p]:
+		case harnessState[p]:
+			omitted = append(omitted, showPath(p)+" (deleted; agent-harness state)")
+		case filtered[p]:
 			omitted = append(omitted, showPath(p)+" (deleted; git filter, may be encrypted)")
 		}
 	}
 	attach := func(path, status string) {
+		if harnessState[path] {
+			omitted = append(omitted, showPath(path)+" (agent-harness state; not attached)")
+			return
+		}
 		if filtered[path] {
 			omitted = append(omitted, showPath(path)+" (git filter; may be encrypted)")
 			return
@@ -749,4 +770,45 @@ func filtersOff(ctx context.Context, root string) ([]string, error) {
 		args = append(args, "-c", "filter."+name+".required=false")
 	}
 	return args, nil
+}
+
+// HarnessPaths lists harness state anywhere in the repository at root,
+// tracked, untracked, or ignored, up to max of them.
+func HarnessPaths(ctx context.Context, root string, max int) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	// Tracked and untracked files in full, then ignored ones collapsed to
+	// their folders (node_modules/ and the like stay one entry each).
+	paths, err := gitPaths(ctx, root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+	if err != nil {
+		return nil, err
+	}
+	ignored, err := gitPaths(ctx, root, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory")
+	if err != nil {
+		return nil, err
+	}
+	paths = append(paths, ignored...)
+	var found []string
+	seen := map[string]bool{}
+	for _, p := range paths {
+		if !harness.Contains(strings.TrimSuffix(p, "/")) {
+			continue
+		}
+		// Report the harness folder itself, not every file in it.
+		parts := strings.Split(strings.TrimSuffix(p, "/"), "/")
+		for i, part := range parts {
+			if harness.Contains(part) {
+				p = strings.Join(parts[:i+1], "/")
+				break
+			}
+		}
+		if !seen[p] {
+			seen[p] = true
+			found = append(found, p)
+			if len(found) >= max {
+				break
+			}
+		}
+	}
+	return found, nil
 }
