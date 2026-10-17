@@ -692,7 +692,7 @@ printf '{"type":"result","subtype":"success","result":"saw %s"}\n' "$content"
 	out := captureStdout(t, func() {
 		code = run(context.Background(), []string{"doctor", "--canary", "--config", cfgPath, "-w", "claude:x"})
 	})
-	for _, check := range []string{"(tools)", "(tools, repo access)", "(mention)", "(mention, repo access)"} {
+	for _, check := range []string{"(tools)", "(tools, repo access)", "(mention)", "(mention, repo access)", "(denied paths, repo access)"} {
 		if !strings.Contains(out, "✓ claude:x "+check) {
 			t.Errorf("missing a passing %s check:\n%s", check, out)
 		}
@@ -748,6 +748,30 @@ printf '{"type":"result","subtype":"success","result":"%s"}\n' "$content"
 	})
 	if code != 1 || !strings.Contains(out, "✗ claude:x (tools, repo access): READ A FILE OUTSIDE ITS FOLDER") {
 		t.Errorf("a claude that reads through the symlink must fail the canary: exit %d\n%s", code, out)
+	}
+}
+
+func TestCanaryCatchesReadsOfDeniedPaths(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script")
+	}
+	dir := t.TempDir()
+	// A claude whose deny rules don't hold: it reads .git/config in its cwd.
+	fake := filepath.Join(dir, "claude")
+	os.WriteFile(fake, []byte(`#!/bin/sh
+cat >/dev/null
+content=""
+[ -f .git/config ] && content=$(cat .git/config)
+printf '{"type":"result","subtype":"success","result":"%s"}\n' "$content"
+`), 0o755)
+	cfgPath := filepath.Join(dir, "config.toml")
+	os.WriteFile(cfgPath, []byte("[backends.claude]\ncommand = \""+fake+"\"\n[backends.codex]\ncommand = \"/nonexistent/c\"\n[backends.pi]\ncommand = \"/nonexistent/p\"\n"), 0o644)
+	var code int
+	out := captureStdout(t, func() {
+		code = run(context.Background(), []string{"doctor", "--canary", "--config", cfgPath, "-w", "claude:x"})
+	})
+	if code != 1 || !strings.Contains(out, "✗ claude:x (denied paths, repo access)") {
+		t.Errorf("a claude that reads a denied path must fail the canary: exit %d\n%s", code, out)
 	}
 }
 
@@ -809,4 +833,59 @@ func TestHarnessWarningInAPlainFolder(t *testing.T) {
 	if !strings.Contains(stderr, "sub/.recallstack holds agent-harness state") || strings.Contains(stderr, "could not check") {
 		t.Errorf("stderr = %q, want the warning naming sub/.recallstack and no scan error", stderr)
 	}
+}
+
+func TestDiffNeverSendsSosOwnFiles(t *testing.T) {
+	unsetEnv(t, backend.EnvGuard)
+	repo := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"commit", "-q", "--allow-empty", "-m", "i"}} {
+		cmd := exec.Command("git", append([]string{"-C", repo, "-c", "user.email=a@b", "-c", "user.name=a"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	// The run history and the config both live in the checkout, unignored.
+	t.Setenv("XDG_STATE_HOME", filepath.Join(repo, ".state"))
+	runs := filepath.Join(repo, ".state", "second-opinion", "runs")
+	os.MkdirAll(runs, 0o700)
+	// One record committed and since changed (it would be in the diff
+	// itself), one untracked (it would be attached).
+	tracked := filepath.Join(runs, history.NewID(time.Now().Add(-time.Minute))+".json")
+	os.WriteFile(tracked, []byte(`{"prompt":"old"}`), 0o600)
+	for _, args := range [][]string{{"add", "."}, {"commit", "-q", "-m", "oops"}} {
+		cmd := exec.Command("git", append([]string{"-C", repo, "-c", "user.email=a@b", "-c", "user.name=a"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	os.WriteFile(tracked, []byte(`{"prompt":"HISTORY-SENTINEL tracked"}`), 0o600)
+	os.WriteFile(filepath.Join(runs, history.NewID(time.Now())+".json"), []byte(`{"prompt":"HISTORY-SENTINEL"}`), 0o600)
+	fakeDir := t.TempDir()
+	fake := filepath.Join(fakeDir, "pi")
+	got := filepath.Join(fakeDir, "got")
+	os.WriteFile(fake, []byte("#!/bin/sh\ncat > "+got+"\necho ok\n"), 0o755)
+	cfg := filepath.Join(repo, "so.toml")
+	os.WriteFile(cfg, []byte("# CONFIG-SENTINEL\n"+stubOtherBackends+"[backends.pi]\ncommand = \""+fake+"\"\n"), 0o600)
+	os.WriteFile(filepath.Join(repo, "a.go"), []byte("package a // ordinary\n"), 0o644)
+	t.Chdir(repo)
+	var out string
+	captureStderr(t, func() {
+		out = captureStdout(t, func() {
+			if code := run(context.Background(), []string{"ask", "--config", cfg, "--diff", "--no-repo", "-w", "pi:x", "q"}); code != 0 {
+				t.Errorf("exit code = %d", code)
+			}
+		})
+	})
+	prompt, _ := os.ReadFile(got)
+	for _, leak := range []string{"HISTORY-SENTINEL", "CONFIG-SENTINEL"} {
+		if strings.Contains(string(prompt), leak) {
+			t.Errorf("--diff sent so's own file (%s):\n%s", leak, prompt)
+		}
+	}
+	for _, want := range []string{"ordinary", "(so's run history; not attached)", "so.toml (so's config; not attached)"} {
+		if !strings.Contains(string(prompt), want) {
+			t.Errorf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	_ = out
 }

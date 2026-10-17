@@ -33,7 +33,8 @@ func Contains(path string) bool {
 // Find walks root for harness state, at any depth and in any letter case:
 // ignored folders, submodules, and nested repositories included, which a
 // git listing would collapse or skip. It returns up to max paths, relative
-// to root, and complete = false if it stopped early, after limit entries.
+// to root, and complete = false if it stopped early: after limit entries,
+// or at max paths with more possibly left.
 // It doesn't descend into .git folders, node_modules, or harness state
 // itself, and doesn't follow symlinks.
 func Find(root string, max, limit int) (found []string, complete bool, err error) {
@@ -70,7 +71,7 @@ func Find(root string, max, limit int) (found []string, complete bool, err error
 	})
 	switch {
 	case errors.Is(err, errDone):
-		return found, true, nil
+		return found, false, nil
 	case errors.Is(err, errStop):
 		return found, false, nil
 	}

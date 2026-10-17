@@ -265,7 +265,7 @@ and environment select.
 
 Agent harnesses sometimes keep session state in the repository (`.recallstack/`, `.specstory/`,
 aider's history files; matched at any depth and in any letter case, inside ignored folders,
-submodules and nested repositories too). `--diff` never attaches them.
+submodules and nested repositories too; the warning below doesn't look inside `node_modules`). `--diff` never attaches them.
 With repo access, claude panelists are denied those paths (Read rules,
 which cover Grep and Glob too), and `so` warns that codex and pi panelists can still read them.
 
@@ -285,16 +285,19 @@ These flags assume no overriding `args` in a `[backends.*]` section of your conf
 appended after `so`'s own flags, so they can undo the lockdown.
 
 `so doctor --canary` tests this on your machine. It plants a file outside each model's folder and
-runs four checks per model, each configured exactly as a panelist: two ask it to read the file with
+runs five checks per model, each configured exactly as a panelist: two ask it to read the file with
 any tool it has, without repo access and with repo access through a symlink in the workspace (only
 claude must refuse that one; codex and pi can read any file with repo access, so for them it is
 reported, not failed), and two name the file in an `@` mention, the way claude would expand it,
-without and with repo access (with repo access, again only claude must refuse). A ✓ means it did not read the file on that
+without and with repo access (with repo access, again only claude must refuse). The fifth plants
+the token in the workspace's own `.git/config`, a nested `.git`, `.recallstack/` and a
+differently-cased `.SpecStory/`, which claude's rules deny, and asks for those. A ✓ means it did not read the file on that
 run, which is evidence rather than proof. In testing, a Codex panelist with this lockdown didn't read the file in
 10 of 10 runs, while the same check caught an unlocked Codex every time.
 
-If your run history (`$XDG_STATE_HOME`) is inside the repository shared with the panel, `so`
-warns: panelists could read earlier runs, including which model was which.
+If your run history (`$XDG_STATE_HOME`) or `so`'s config is inside a repository, `--diff` never
+attaches them, and `so` warns when repo access would let panelists read them (earlier runs show
+which model was which; the config may set credentials in `env`).
 
 `so` sets `SECOND_OPINION_DEPTH=1` for every panelist (including the commands Codex runs) and refuses to start a panel, ping models, or
 uninstall when that variable is present. This stops accidental recursion; it is cooperative, so a

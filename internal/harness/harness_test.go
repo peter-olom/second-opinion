@@ -53,3 +53,14 @@ func TestFindSeesWhatGitWouldHide(t *testing.T) {
 		t.Error("a walk cut short by the limit should say it is incomplete")
 	}
 }
+
+func TestFindSaysWhenItStoppedAtMax(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"a/.recallstack", "b/.recallstack", "c/.recallstack"} {
+		os.MkdirAll(filepath.Join(root, d), 0o755)
+	}
+	found, complete, err := Find(root, 2, 10000)
+	if err != nil || len(found) != 2 || complete {
+		t.Errorf("Find = %q, complete %v, %v; want 2 found and incomplete", found, complete, err)
+	}
+}

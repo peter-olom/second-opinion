@@ -66,6 +66,48 @@ func Root(ctx context.Context, dir string) (string, error) {
 
 var errTooManyPaths = errors.New("listing over the size limit")
 
+// Exclude is a path (absolute, or relative to the current directory) that
+// Diff leaves out, with the reason it gives.
+type Exclude struct{ Path, Reason string }
+
+// relInside returns path relative to root, slash-separated, if it is root
+// or inside it. path need not exist yet.
+func relInside(root, path string) (string, bool) {
+	if path == "" {
+		return "", false
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", false
+	}
+	r, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", false
+	}
+	rel, err := filepath.Rel(r, resolveExisting(abs))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return filepath.ToSlash(rel), true
+}
+
+// resolveExisting resolves symlinks in p through its nearest existing
+// parent.
+func resolveExisting(p string) string {
+	var rest []string
+	for {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return filepath.Join(append([]string{r}, rest...)...)
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return filepath.Join(append([]string{p}, rest...)...)
+		}
+		rest = append([]string{filepath.Base(p)}, rest...)
+		p = parent
+	}
+}
+
 // ErrForeignWorkTree marks a work tree that doesn't hold its repository's .git.
 var ErrForeignWorkTree = errors.New("not using it")
 
@@ -125,8 +167,9 @@ type Context struct {
 // such as "main" the diff starts at the merge-base, so it shows this branch's
 // work (committed or not) and none of main's later commits. A non-empty nonce
 // is added to the block tags (<file-NONCE …>), so a changed file can't close
-// its own block and pass its content off as another file's.
-func Diff(ctx context.Context, dir, base, nonce string) (Context, error) {
+// its own block and pass its content off as another file's. Paths under
+// any exclude are left out like filtered files, and listed with its reason.
+func Diff(ctx context.Context, dir, base, nonce string, exclude ...Exclude) (Context, error) {
 	ctx, cancel := context.WithTimeout(ctx, diffTimeout)
 	defer cancel()
 	if strings.HasPrefix(base, "-") {
@@ -271,6 +314,20 @@ func Diff(ctx context.Context, dir, base, nonce string) (Context, error) {
 			harnessState[p], drop[p] = true, true
 		}
 	}
+	// so's own files (its run history, its config) when they sit in the
+	// repository.
+	excluded := map[string]string{}
+	for _, ex := range exclude {
+		rel, ok := relInside(root, ex.Path)
+		if !ok {
+			continue
+		}
+		for _, p := range all {
+			if rel == "." || p == rel || strings.HasPrefix(p, rel+"/") {
+				excluded[p], drop[p] = ex.Reason, true
+			}
+		}
+	}
 	sections := &sectionFilter{checked: checked, drop: drop}
 	var kept strings.Builder
 	diffTruncated, err := gitLines(ctx, root, maxRawDiffBytes, func(line string) bool {
@@ -312,6 +369,8 @@ func Diff(ctx context.Context, dir, base, nonce string) (Context, error) {
 	for _, p := range inDiff {
 		switch {
 		case isChanged[p]:
+		case excluded[p] != "":
+			omitted = append(omitted, showPath(p)+" (deleted; "+excluded[p]+")")
 		case harnessState[p]:
 			omitted = append(omitted, showPath(p)+" (deleted; agent-harness state)")
 		case filtered[p]:
@@ -319,6 +378,10 @@ func Diff(ctx context.Context, dir, base, nonce string) (Context, error) {
 		}
 	}
 	attach := func(path, status string) {
+		if why := excluded[path]; why != "" {
+			omitted = append(omitted, showPath(path)+" ("+why+"; not attached)")
+			return
+		}
 		if harnessState[path] {
 			omitted = append(omitted, showPath(path)+" (agent-harness state; not attached)")
 			return
