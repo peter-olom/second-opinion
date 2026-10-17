@@ -889,3 +889,57 @@ func TestDiffNeverSendsSosOwnFiles(t *testing.T) {
 	}
 	_ = out
 }
+
+func TestDiffExcludesSosFilesHoweverSpelled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks")
+	}
+	unsetEnv(t, backend.EnvGuard)
+	repo := t.TempDir()
+	if r, err := filepath.EvalSymlinks(repo); err == nil {
+		repo = r
+	}
+	for _, args := range [][]string{{"init", "-q"}, {"commit", "-q", "--allow-empty", "-m", "i"}} {
+		cmd := exec.Command("git", append([]string{"-C", repo, "-c", "user.email=a@b", "-c", "user.name=a"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	fakeDir := t.TempDir()
+	fake := filepath.Join(fakeDir, "pi")
+	got := filepath.Join(fakeDir, "got")
+	os.WriteFile(fake, []byte("#!/bin/sh\ncat > "+got+"\necho ok\n"), 0o755)
+	// srv/config.toml, reached as link/../config.toml with link -> srv/nested:
+	// the OS resolves the link first, a lexical clean wouldn't.
+	os.MkdirAll(filepath.Join(repo, "srv", "nested"), 0o755)
+	os.Symlink(filepath.Join(repo, "srv", "nested"), filepath.Join(repo, "link"))
+	os.WriteFile(filepath.Join(repo, "srv", "config.toml"), []byte("# CONFIG-SENTINEL\n"+stubOtherBackends+"[backends.pi]\ncommand = \""+fake+"\"\n"), 0o600)
+	os.WriteFile(filepath.Join(repo, "a.go"), []byte("package a // ordinary\n"), 0o644)
+	// The state folder named in another letter case where the filesystem
+	// ignores case (macOS by default).
+	state := filepath.Join(repo, "State")
+	os.MkdirAll(filepath.Join(state, "second-opinion", "runs"), 0o700)
+	os.WriteFile(filepath.Join(state, "second-opinion", "runs", history.NewID(time.Now())+".json"), []byte(`{"prompt":"HISTORY-SENTINEL"}`), 0o600)
+	stateSpelling := state
+	if _, err := os.Stat(filepath.Join(repo, "state")); err == nil {
+		stateSpelling = filepath.Join(repo, "state")
+	}
+	t.Setenv("XDG_STATE_HOME", stateSpelling)
+	t.Chdir(repo)
+	captureStderr(t, func() {
+		captureStdout(t, func() {
+			if code := run(context.Background(), []string{"ask", "--config", "link/../config.toml", "--diff", "--no-repo", "-w", "pi:x", "q"}); code != 0 {
+				t.Errorf("exit code = %d", code)
+			}
+		})
+	})
+	prompt, _ := os.ReadFile(got)
+	for _, leak := range []string{"CONFIG-SENTINEL", "HISTORY-SENTINEL"} {
+		if strings.Contains(string(prompt), leak) {
+			t.Errorf("an alias let so's own file through (%s):\n%s", leak, prompt)
+		}
+	}
+	if !strings.Contains(string(prompt), "ordinary") {
+		t.Errorf("the ordinary change is missing:\n%s", prompt)
+	}
+}

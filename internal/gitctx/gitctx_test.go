@@ -1094,3 +1094,41 @@ func TestFilterDriversNamedLikeAttributeStates(t *testing.T) {
 		t.Errorf("the filtered files must be left out, a.go kept:\n%s", ctx.Text)
 	}
 }
+
+func TestRootAcceptsAnotherLetterCase(t *testing.T) {
+	dir := newRepo(t)
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = r
+	}
+	other := filepath.Join(filepath.Dir(dir), strings.ToUpper(filepath.Base(dir)))
+	if _, err := os.Stat(other); err != nil {
+		t.Skip("case-sensitive filesystem")
+	}
+	root, err := Root(context.Background(), other)
+	if err != nil || !Inside(root, dir) {
+		t.Errorf("Root from %s = %q, %v; want the repository", other, root, err)
+	}
+}
+
+func TestInsideFollowsTheFilesystem(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks")
+	}
+	base := t.TempDir()
+	os.MkdirAll(filepath.Join(base, "srv", "nested"), 0o755)
+	os.MkdirAll(filepath.Join(base, "repo"), 0o755)
+	os.Symlink(filepath.Join(base, "srv", "nested"), filepath.Join(base, "repo", "link"))
+	// repo/link/.. is srv on disk, outside repo; lexically it would be repo.
+	// (Spelled out: filepath.Join would clean "link/.." away lexically.)
+	if Inside(filepath.Join(base, "repo"), base+"/repo/link/../x") {
+		t.Error("link/.. should resolve through the link, outside the repository")
+	}
+	if !Inside(filepath.Join(base, "srv"), base+"/repo/link/../not-yet") {
+		t.Error("a path that doesn't exist yet should still be placed by its parent")
+	}
+	// Relative to the current directory, the same holds.
+	t.Chdir(filepath.Join(base, "repo"))
+	if Inside(filepath.Join(base, "repo"), "link/../x") || !Inside(filepath.Join(base, "srv"), "link/../x") {
+		t.Error("a relative link/.. should resolve through the link too")
+	}
+}

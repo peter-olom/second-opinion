@@ -497,7 +497,7 @@ func TestClaudeGetsDefusedPromptAndReadDeny(t *testing.T) {
 			t.Errorf("workspace %q: Read deny = %v, want it only without repo access", workspace, deny)
 		}
 		harnessDeny := true
-		for _, rule := range []string{"Read(./.git)", "Read(./.git/**)", "Read(**/.git/**)"} {
+		for _, rule := range []string{"Read(./.git)", "Read(./.git/**)", "Read(**/.git)", "Read(**/.git/**)"} {
 			harnessDeny = harnessDeny && strings.Contains(string(args), strconv.Quote(rule))
 		}
 		for _, n := range harness.Names {

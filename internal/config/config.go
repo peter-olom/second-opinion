@@ -158,7 +158,11 @@ type Config struct {
 // DefaultPath returns $SECOND_OPINION_CONFIG, or config.toml under the XDG
 // config directory. A relative XDG_CONFIG_HOME is ignored, as the XDG spec requires.
 func DefaultPath() string {
-	if p := os.Getenv("SECOND_OPINION_CONFIG"); p != "" {
+	// Relative, it would be read from whatever folder so runs in, which may
+	// be an untrusted checkout that then picks the backend commands; such a
+	// value is ignored (main warns). --config can still be relative: it is
+	// typed for each run.
+	if p := os.Getenv("SECOND_OPINION_CONFIG"); filepath.IsAbs(p) {
 		return p
 	}
 	if x := os.Getenv("XDG_CONFIG_HOME"); filepath.IsAbs(x) {

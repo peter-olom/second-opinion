@@ -41,7 +41,7 @@ func (c claude) Run(ctx context.Context, req Request) (string, error) {
 		// too; verified with Claude Code 2.1.)
 		// The repository's .git too: claude has no shell to need it, and it
 		// can hold credentialed remote URLs and secrets removed from HEAD.
-		deny := []string{"Read(./.git)", "Read(./.git/**)", "Read(**/.git/**)"}
+		deny := []string{"Read(./.git)", "Read(./.git/**)", "Read(**/.git)", "Read(**/.git/**)"}
 		for _, p := range harness.Names {
 			deny = append(deny, "Read(./"+p+")", "Read(./"+p+"/**)", "Read(**/"+p+")", "Read(**/"+p+"/**)")
 		}

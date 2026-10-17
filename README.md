@@ -322,8 +322,9 @@ agent harness's saved conversations.
 
 The config lives at `~/.config/second-opinion/config.toml`, or `$XDG_CONFIG_HOME/second-opinion/config.toml`
 when that is set to an absolute path. You can point to a different file with `SECOND_OPINION_CONFIG`
-or `--config`. Without an absolute home directory there is no default config, and the built-in
-defaults apply.
+or `--config`. `SECOND_OPINION_CONFIG` must be an absolute path (a relative one is ignored, with a
+warning, since it would be read from whatever folder `so` runs in). Without an absolute home
+directory there is no default config, and the built-in defaults apply.
 
 ### Profiles
 

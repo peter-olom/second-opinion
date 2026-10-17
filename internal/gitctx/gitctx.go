@@ -70,44 +70,6 @@ var errTooManyPaths = errors.New("listing over the size limit")
 // Diff leaves out, with the reason it gives.
 type Exclude struct{ Path, Reason string }
 
-// relInside returns path relative to root, slash-separated, if it is root
-// or inside it. path need not exist yet.
-func relInside(root, path string) (string, bool) {
-	if path == "" {
-		return "", false
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", false
-	}
-	r, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return "", false
-	}
-	rel, err := filepath.Rel(r, resolveExisting(abs))
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", false
-	}
-	return filepath.ToSlash(rel), true
-}
-
-// resolveExisting resolves symlinks in p through its nearest existing
-// parent.
-func resolveExisting(p string) string {
-	var rest []string
-	for {
-		if r, err := filepath.EvalSymlinks(p); err == nil {
-			return filepath.Join(append([]string{r}, rest...)...)
-		}
-		parent := filepath.Dir(p)
-		if parent == p {
-			return filepath.Join(append([]string{p}, rest...)...)
-		}
-		rest = append([]string{filepath.Base(p)}, rest...)
-		p = parent
-	}
-}
-
 // ErrForeignWorkTree marks a work tree that doesn't hold its repository's .git.
 var ErrForeignWorkTree = errors.New("not using it")
 
@@ -143,18 +105,48 @@ func ownsGitDir(root, gitDir string) bool {
 	return err == nil && os.SameFile(got, want)
 }
 
-// contains reports whether dir is root or inside it, by their real paths.
-func contains(root, dir string) bool {
-	r, err1 := filepath.EvalSymlinks(root)
-	d, err2 := filepath.Abs(dir)
-	if err2 == nil {
-		d, err2 = filepath.EvalSymlinks(d)
-	}
-	if err1 != nil || err2 != nil {
+// contains reports whether dir is root or inside it.
+func contains(root, dir string) bool { return Inside(root, dir) }
+
+// Inside reports whether path is root or inside it, by file identity
+// rather than by spelling: a different letter case on a case-insensitive
+// filesystem, symlinks, and "link/.." (which the OS resolves through the
+// link, unlike a lexical clean) all count as what they are on disk. path
+// need not exist yet.
+func Inside(root, path string) bool {
+	ri, err := os.Stat(root)
+	if err != nil || path == "" {
 		return false
 	}
-	rel, err := filepath.Rel(r, d)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	for cur := physical(path); ; {
+		if ci, err := os.Stat(cur); err == nil && os.SameFile(ci, ri) {
+			return true
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return false
+		}
+		cur = parent
+	}
+}
+
+// physical returns path with symlinks and ".." resolved the way the OS
+// does, through its nearest existing parent if it doesn't exist yet. It
+// never cleans lexically before resolving.
+func physical(path string) string {
+	if !filepath.IsAbs(path) {
+		if wd, err := os.Getwd(); err == nil {
+			path = wd + string(filepath.Separator) + path
+		}
+	}
+	if r, err := filepath.EvalSymlinks(path); err == nil {
+		return r
+	}
+	i := strings.LastIndexAny(path, `/`+string(filepath.Separator))
+	if i <= 0 {
+		return path
+	}
+	return filepath.Join(physical(path[:i]), path[i+1:])
 }
 
 // Context is the rendered review context for a set of changes.
@@ -316,14 +308,18 @@ func Diff(ctx context.Context, dir, base, nonce string, exclude ...Exclude) (Con
 	}
 	// so's own files (its run history, its config) when they sit in the
 	// repository.
+	// Matched by file identity, so no spelling of the path (letter case,
+	// symlinks, "..") lets them through.
 	excluded := map[string]string{}
 	for _, ex := range exclude {
-		rel, ok := relInside(root, ex.Path)
-		if !ok {
+		if ex.Path == "" {
 			continue
 		}
+		if _, err := os.Stat(physical(ex.Path)); err != nil {
+			continue // nothing there to send
+		}
 		for _, p := range all {
-			if rel == "." || p == rel || strings.HasPrefix(p, rel+"/") {
+			if Inside(physical(ex.Path), filepath.Join(root, filepath.FromSlash(p))) {
 				excluded[p], drop[p] = ex.Reason, true
 			}
 		}

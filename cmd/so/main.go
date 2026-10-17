@@ -73,6 +73,9 @@ func main() {
 }
 
 func run(ctx context.Context, args []string) int {
+	if p := os.Getenv("SECOND_OPINION_CONFIG"); p != "" && !filepath.IsAbs(p) {
+		fmt.Fprintf(os.Stderr, "so: ignoring SECOND_OPINION_CONFIG=%q: it must be an absolute path (a relative one would be read from whatever folder so runs in)\n", p)
+	}
 	if len(args) == 0 {
 		fmt.Fprint(os.Stderr, usage)
 		return 2
@@ -469,32 +472,8 @@ func resolveWorkspace(ctx context.Context, explicit, disabled bool, modeDefault 
 	return "", nil
 }
 
-// contains reports whether path is root or inside it ("" is never inside).
-func contains(root, path string) bool {
-	if path == "" {
-		return false
-	}
-	rel, err := filepath.Rel(realPath(root), realPath(path))
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-// realPath resolves symlinks in p, through its nearest existing parent if
-// p itself doesn't exist yet.
-func realPath(p string) string {
-	p = filepath.Clean(p)
-	var rest []string
-	for {
-		if r, err := filepath.EvalSymlinks(p); err == nil {
-			return filepath.Join(append([]string{r}, rest...)...)
-		}
-		parent := filepath.Dir(p)
-		if parent == p {
-			return filepath.Join(append([]string{p}, rest...)...)
-		}
-		rest = append([]string{filepath.Base(p)}, rest...)
-		p = parent
-	}
-}
+// contains reports whether path is root or inside it, by file identity.
+func contains(root, path string) bool { return gitctx.Inside(root, path) }
 
 // inHomeDotDir reports whether dir is inside a dot-folder directly under the
 // home directory, such as ~/.config/nvim.

@@ -354,3 +354,17 @@ func TestParseSpecRejectsControlCharacters(t *testing.T) {
 		t.Error("a spec with a newline should be rejected")
 	}
 }
+
+func TestRelativeConfigEnvIsIgnored(t *testing.T) {
+	t.Setenv("SECOND_OPINION_CONFIG", ".so.toml")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", t.TempDir())
+	if p := DefaultPath(); p == ".so.toml" || !filepath.IsAbs(p) {
+		t.Errorf("DefaultPath = %q; a relative SECOND_OPINION_CONFIG must not be used", p)
+	}
+	abs := filepath.Join(t.TempDir(), "so.toml")
+	t.Setenv("SECOND_OPINION_CONFIG", abs)
+	if p := DefaultPath(); p != abs {
+		t.Errorf("DefaultPath = %q, want %q", p, abs)
+	}
+}
