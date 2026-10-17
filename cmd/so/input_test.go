@@ -156,11 +156,14 @@ func TestGuardRefusesEvenWhenEmpty(t *testing.T) {
 
 func TestNegativeTimeoutRejected(t *testing.T) {
 	unsetEnv(t, backend.EnvGuard)
-	captureStderr(t, func() {
+	stderr := captureStderr(t, func() {
 		if code := run(context.Background(), []string{"ask", "--config", fakePiConfig(t), "--timeout", "-1s", "-w", "pi:x", "q"}); code != 1 {
 			t.Errorf("exit code = %d, want 1", code)
 		}
 	})
+	if !strings.Contains(stderr, "--timeout must be positive") {
+		t.Errorf("stderr = %q, want the timeout refused before any model runs", stderr)
+	}
 }
 
 func TestPingWalksFallbacksOfRepeatedModels(t *testing.T) {
@@ -322,7 +325,9 @@ func TestAnonymousFailureWithoutHistory(t *testing.T) {
 
 	out := captureStdout(t, func() {
 		captureStderr(t, func() {
-			run(context.Background(), []string{"ask", "--config", cfg, "--no-repo", "-w", "pi:a", "-w", "pi:b", "q"})
+			if code := run(context.Background(), []string{"ask", "--config", cfg, "--no-repo", "-w", "pi:a", "-w", "pi:b", "q"}); code != 1 {
+				t.Errorf("exit code = %d, want 1 when every panelist fails", code)
+			}
 		})
 	})
 	if strings.Contains(out, "secret-model-9") {

@@ -162,8 +162,16 @@ Rules:
 - Each finding needs evidence from the code (file:line) and a concrete scenario where it goes wrong.
 - If the caller lists known issues, confirm or correct them briefly and spend your effort on the
   ones not listed.
-- Use the review mode's severity scale (blocker, major, minor, nit) and verdicts (approve, approve
-  with fixes, request changes).
+- Severity:
+  - blocker: breaks correctness, security, or data integrity in realistic use. Must fix before release.
+  - major: a likely bug on a reachable path, a broken promise users rely on, or a significant
+    reliability or performance risk. Should fix before release.
+  - minor: a real issue with limited impact, or a maintainability problem likely to cause bugs.
+  - nit: optional polish. Report at most three.
+- Confidence: high = verified in the code; medium = strong inference from what you saw;
+  low = a suspicion you could not verify.
+- Verdict: approve if nothing is above nit; approve with fixes if the worst finding is minor;
+  request changes if there is any blocker or major.
 """
 format = """
 ## Verdict

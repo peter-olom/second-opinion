@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/peter-olom/second-opinion/internal/procgroup"
 )
 
 // Limits on what --diff attaches. Variables so tests can lower them.
@@ -305,7 +307,11 @@ func runGit(ctx context.Context, dir string, stdout, stderr io.Writer, args ...s
 	cmd.Env = append(gitEnv(), "GIT_OPTIONAL_LOCKS=0")
 	cmd.WaitDelay = 5 * time.Second
 	cmd.Stdout, cmd.Stderr = stdout, stderr
+	// Git can start filter helpers from the user's git config; in a process
+	// group, they die with git on cancellation and can't outlive it.
+	procgroup.Isolate(cmd)
 	err := cmd.Run()
+	procgroup.Kill(cmd)
 	// If git exited successfully but a helper it started kept the output
 	// pipe open, WaitDelay closed it; git's own output is complete.
 	if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {

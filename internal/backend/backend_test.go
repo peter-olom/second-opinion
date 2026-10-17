@@ -206,9 +206,9 @@ func TestClaudeAndPiLockdownFlags(t *testing.T) {
 		notWant   []string
 	}{
 		{"claude, no repo", claudeB, "", []string{"--tools\n\n", "--strict-mcp-config", "--setting-sources\n\n", "--no-session-persistence", "--disable-slash-commands"}, []string{"Read,Grep,Glob"}},
-		{"claude, repo", claudeB, repo, []string{"--tools\nRead,Grep,Glob\n", "--strict-mcp-config", "--setting-sources\n\n"}, nil},
-		{"pi, no repo", piB, "", []string{"--no-tools", "--no-context-files", "--no-extensions", "--no-skills", "--no-approve", "--no-session"}, []string{"--tools"}},
-		{"pi, repo", piB, repo, []string{"--tools\nread,grep,find,ls\n", "--no-extensions", "--no-skills", "--no-approve"}, []string{"--no-tools"}},
+		{"claude, repo", claudeB, repo, []string{"--tools\nRead,Grep,Glob\n", "--strict-mcp-config", "--setting-sources\n\n", "--no-session-persistence", "--disable-slash-commands"}, nil},
+		{"pi, no repo", piB, "", []string{"--no-tools", "--no-context-files", "--no-extensions", "--no-skills", "--no-approve", "--no-session", "--no-prompt-templates"}, []string{"--tools"}},
+		{"pi, repo", piB, repo, []string{"--tools\nread,grep,find,ls\n", "--no-extensions", "--no-skills", "--no-approve", "--no-session", "--no-prompt-templates"}, []string{"--no-tools"}},
 	} {
 		args := argvOf(t, tc.b, tc.workspace)
 		for _, w := range tc.want {
@@ -296,7 +296,7 @@ cat >/dev/null; echo ok > "$out"`)
 		if ws != "" {
 			cwd = ws
 		}
-		for _, want := range []string{"--sandbox\nread-only\n", "--ignore-user-config\n", "--ignore-rules\n", "--ephemeral\n", "--cd\n" + cwd + "\n", "--disable\napps\n", `web_search="disabled"`, `shell_environment_policy.inherit="core"`} {
+		for _, want := range []string{"--sandbox\nread-only\n", "--ignore-user-config\n", "--ignore-rules\n", "--ephemeral\n", "--cd\n" + cwd + "\n", "--disable\napps\n", `web_search="disabled"`, `shell_environment_policy.inherit="core"`, `shell_environment_policy.set={SECOND_OPINION_DEPTH="1"}`, "skills.max_context_tokens=1"} {
 			if !strings.Contains(args, want) {
 				t.Errorf("workspace %q: missing %q in:\n%s", ws, want, args)
 			}
@@ -331,21 +331,31 @@ func TestCancelAndTimeoutKillTheCLIAndHelpers(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name string
-		ctx  func() (context.Context, context.CancelFunc)
+		ctx  func(pidFile string) (context.Context, context.CancelFunc)
 		want error
 	}{
-		{"timeout", func() (context.Context, context.CancelFunc) {
-			return context.WithTimeout(context.Background(), 500*time.Millisecond)
+		// Generous enough for the helper to start on a loaded machine.
+		{"timeout", func(string) (context.Context, context.CancelFunc) {
+			return context.WithTimeout(context.Background(), 2*time.Second)
 		}, ErrTimeout},
-		{"cancel", func() (context.Context, context.CancelFunc) {
+		// Cancel once the helper exists, so the test always has one to check.
+		{"cancel", func(pidFile string) (context.Context, context.CancelFunc) {
 			ctx, cancel := context.WithCancel(context.Background())
-			time.AfterFunc(500*time.Millisecond, cancel)
+			go func() {
+				for ctx.Err() == nil {
+					if data, _ := os.ReadFile(pidFile); atoi(strings.TrimSpace(string(data))) > 0 {
+						cancel()
+						return
+					}
+					time.Sleep(20 * time.Millisecond)
+				}
+			}()
 			return ctx, cancel
 		}, context.Canceled},
 	} {
 		pidFile := filepath.Join(t.TempDir(), "pid")
 		cli := script(t, "sleep 30 & echo $! > "+pidFile+"\nsleep 30\n")
-		ctx, cancel := tc.ctx()
+		ctx, cancel := tc.ctx(pidFile)
 		start := time.Now()
 		_, err := run(ctx, "x", Options{Command: cli}, t.TempDir(), nil, "")
 		cancel()

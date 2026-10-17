@@ -1,6 +1,6 @@
 //go:build linux
 
-package backend
+package procgroup
 
 import "syscall"
 

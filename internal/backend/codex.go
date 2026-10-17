@@ -43,8 +43,13 @@ func (c codex) Run(ctx context.Context, req Request) (string, error) {
 		"--cd", req.cwd(),
 		"-c", "developer_instructions=" + tomlString(req.System),
 		// Commands Codex runs see only core variables (HOME, PATH, …), not
-		// the caller's API keys and tokens.
+		// the caller's API keys and tokens, plus the recursion guard.
 		"-c", `shell_environment_policy.inherit="core"`,
+		"-c", `shell_environment_policy.set={` + EnvGuard + `="1"}`,
+		// Codex has no switch for skills, and --ignore-user-config leaves
+		// them on. A one-token catalog budget drops every skill from what
+		// the model sees (verified with Codex 0.159).
+		"-c", "skills.max_context_tokens=1",
 	}
 	features, err := codexFeatures(ctx, c.opts)
 	if err != nil {

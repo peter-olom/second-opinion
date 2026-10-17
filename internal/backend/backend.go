@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/peter-olom/second-opinion/internal/procgroup"
 )
 
 // ErrTimeout is returned when a CLI exceeds its deadline.
@@ -115,7 +117,7 @@ func execCLI(ctx context.Context, bin string, args []string, dir string, env []s
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
 	cmd.Env = env
-	isolateProcessGroup(cmd)
+	procgroup.Isolate(cmd)
 
 	var pipes [6]*os.File // inR, inW, outR, outW, errR, errW
 	for i := 0; i < 6; i += 2 {
@@ -145,7 +147,7 @@ func execCLI(ctx context.Context, bin string, args []string, dir string, env []s
 	if err == nil {
 		err = cmd.Wait()
 	}
-	killProcessGroup(cmd)
+	procgroup.Kill(cmd)
 
 	// Normally all three finish at once. If something outside the group still
 	// holds a pipe, close our ends; if even that does not unblock a read (it

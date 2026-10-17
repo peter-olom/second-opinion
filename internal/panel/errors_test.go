@@ -198,3 +198,11 @@ func TestClaudeSuccessOutputNeverTriggersAFallback(t *testing.T) {
 		}
 	}
 }
+
+func TestEveryKnownKindHasAHint(t *testing.T) {
+	for _, k := range []ErrorKind{KindContext, KindQuota, KindAuth, KindModel, KindTimeout, KindCancelled} {
+		if k.Hint() == "" {
+			t.Errorf("kind %s has no hint", k)
+		}
+	}
+}

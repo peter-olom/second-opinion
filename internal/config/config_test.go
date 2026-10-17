@@ -264,3 +264,23 @@ func TestParseSpecTrailingAt(t *testing.T) {
 		t.Errorf("ParseSpec(codex:gpt@) = %+v, %v; want model gpt, no effort", got, err)
 	}
 }
+
+func TestSeverityModesDefineTheirScale(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Panelists get only their own mode's text, so a mode whose format asks
+	// for severities has to define them.
+	for _, name := range cfg.ModeNames() {
+		m := cfg.Modes[name]
+		if !strings.Contains(m.Format, "severity") {
+			continue
+		}
+		for _, want := range []string{"blocker:", "major:", "minor:", "nit:", "Verdict: approve if"} {
+			if !strings.Contains(m.Instructions, want) {
+				t.Errorf("mode %s asks for severities but its instructions lack %q", name, want)
+			}
+		}
+	}
+}

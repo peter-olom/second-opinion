@@ -90,3 +90,25 @@ func TestFailureShowsHint(t *testing.T) {
 		t.Errorf("quota failure should suggest a fallback:\n%s", b.String())
 	}
 }
+
+func TestNamedPanelShowsWhichFallbackAnswered(t *testing.T) {
+	primary := &config.Panelist{Backend: "codex", Model: "gpt"}
+	res := panel.Result{Opinions: []panel.Opinion{
+		{Label: "codex:gpt", Panelist: &config.Panelist{Backend: "pi", Model: "glm"}, Output: "ok",
+			Attempts: []panel.Attempt{{Panelist: primary, Kind: panel.KindQuota}}},
+		{Label: "claude:opus", Panelist: &config.Panelist{Backend: "claude", Model: "opus"}, Output: "ok"},
+	}}
+	var b strings.Builder
+	if err := Markdown(&b, res); err != nil {
+		t.Fatal(err)
+	}
+	if out := b.String(); !strings.Contains(out, "- codex:gpt: `pi:glm` (after `codex:gpt` hit a quota limit)") {
+		t.Errorf("a named panel should say which fallback answered:\n%s", out)
+	}
+	res.Opinions[0].Attempts = nil
+	b.Reset()
+	Markdown(&b, res)
+	if strings.Contains(b.String(), "Panel key") {
+		t.Errorf("a named panel without fallbacks needs no key:\n%s", b.String())
+	}
+}

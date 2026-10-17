@@ -16,8 +16,9 @@ anything else.
 
 ## What panelists can and cannot see
 
-Panelists **never see this conversation**. They see your prompt, anything you attach, and, if the
-panel has repository access, the code in the repository.
+Panelists are **not given this conversation**. They see your prompt, anything you attach, and, if
+the panel has repository access, the code in the repository. With repository access, codex and pi
+panelists can also read files elsewhere on disk, which may include saved agent conversations.
 
 - **Your prompt.** Always state the goal, the specific question, the constraints, what you have
   tried, and your current view, and ask them to challenge it rather than confirm it.
@@ -90,8 +91,9 @@ when you report the result.
   twice that, and do not start it again while it is still running.
 - The answer is markdown on stdout. Errors go to stderr, and so does progress when stderr is a
   terminal or with `-v`.
-- If one panelist fails, the others still return. The exit code is 1 if every panelist failed, and
-  130 if the run was interrupted. Each failure shows a kind and a suggested fix:
+- If one panelist fails, the others still return. The exit code is 1 if every panelist failed (or
+  on an error), 2 for a usage error, 3 if `so` refused to run inside a panelist, and 130 if the run
+  was interrupted. Each failure shows a kind and a suggested fix:
   - `quota`: a usage or rate limit was hit. A configured `fallback` is tried automatically.
     Otherwise, retry later or suggest that the user add a fallback.
   - `auth`: the CLI is not signed in. Ask the user to sign in; don't do it for them.
@@ -99,6 +101,7 @@ when you report the result.
     replacement with `so doctor --with`.
   - `timeout`: retry with a longer `--timeout` or lower effort.
   - `context`: the prompt is too long for the model; attach less.
+  - `cancelled`: the run was interrupted; run it again if you still need the answer.
 - `so` refuses to run from inside a panelist, to stop accidental recursion.
 
 ## Using the answer

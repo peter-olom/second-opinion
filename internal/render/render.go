@@ -55,12 +55,23 @@ func Markdown(w io.Writer, r panel.Result) error {
 		writeBody(&b, o)
 	}
 
-	if r.Anonymous {
+	// Named panels still need a key when a fallback answered: the heading
+	// names the model that was asked, not the one that answered.
+	if r.Anonymous || fellBack(r) {
 		writeKey(&b, r)
 	}
 
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+func fellBack(r panel.Result) bool {
+	for _, o := range r.Opinions {
+		if len(o.Attempts) > 0 {
+			return true
+		}
+	}
+	return r.Synthesis != nil && len(r.Synthesis.Attempts) > 0
 }
 
 // writeKey maps anonymous labels to models, if the identities were not redacted.

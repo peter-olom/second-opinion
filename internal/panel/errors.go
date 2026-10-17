@@ -94,6 +94,8 @@ func (k ErrorKind) Hint() string {
 		return "The prompt is too long for this model. Attach less, for example a narrower --base or fewer -f files."
 	case KindTimeout:
 		return "The model did not finish in time. Retry with a longer --timeout or a lower effort."
+	case KindCancelled:
+		return "The run was interrupted before this model answered. Run it again if you still need its answer."
 	}
 	return ""
 }

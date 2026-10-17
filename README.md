@@ -73,8 +73,10 @@ so ask -p panel --format json "..."                                        # mac
 ```
 
 The result goes to stdout. Progress goes to stderr when stderr is a terminal, or with `-v`. If some
-panelists fail, the run still succeeds with the ones that answered. The exit code is 1 when every
-panelist failed, and 130 when the run was interrupted, whatever had answered by then.
+panelists fail, the run still succeeds with the ones that answered. Exit codes: 0 when at least
+one panelist answered, 1 when every panelist failed (or on an error such as a bad config), 2 for a
+usage error, 3 when `so` refuses to run inside a panelist, and 130 when the run was interrupted,
+whatever had answered by then.
 
 ## Anonymous panels
 
@@ -98,7 +100,8 @@ therefore blind by default:
 ## When a model fails
 
 The other panelists still answer, and the exit code is 1 only when every one fails. Each
-failure gets a category and a suggested fix in the output (`error_kind` in JSON):
+failure gets a category in the output (`error_kind` in JSON), and a suggested fix for every kind
+except `other`:
 
 | kind | meaning | what to do |
 |---|---|---|
@@ -107,11 +110,13 @@ failure gets a category and a suggested fix in the output (`error_kind` in JSON)
 | `model` | unknown, retired, or unsupported model | update the profile and test with `so doctor --with` |
 | `timeout` | did not finish within `--timeout` | longer timeout or lower effort |
 | `context` | the prompt is too long for the model | attach less: a narrower `--base`, fewer `-f` files |
+| `cancelled` | the run was interrupted (Ctrl-C, terminal closed) | run it again |
 
 The CLIs report errors as free text, so `so` sorts them by matching common phrasings and HTTP status
 codes. Anything it doesn't recognise is `other`. When a fallback answers, the output says so
-without naming either model (for example, "answered by fallback after 1 usage limit").
-`--reveal` and `so runs show --reveal` show which models were involved.
+(for example, "answered by fallback after 1 usage limit"). In an anonymous panel it names neither
+model, and `--reveal` or `so runs show --reveal` shows which models were involved. With
+`anonymize = false`, a panel key at the end names the model that answered.
 
 ## Run history
 
@@ -198,7 +203,8 @@ run the pi panelist at all, and it reports why. A later pi version could add mig
 
 Panelists inherit your environment, as the CLIs need it to run and sign in. Codex runs commands
 with only core variables (`HOME`, `PATH`, …; `shell_environment_policy.inherit = "core"`), so its
-shell doesn't see your API keys and tokens. pi's `read` with repo access could read
+shell doesn't see your API keys and tokens. Codex's agent skills are hidden from it too (its
+skills catalog gets a one-token budget), since Codex has no switch to turn them off. pi's `read` with repo access could read
 `/proc/self/environ` on Linux. If `ANTHROPIC_API_KEY` or `CODEX_API_KEY`/`OPENAI_API_KEY` is set,
 that CLI may bill the API account instead of your subscription; `so doctor` warns about it, and a
 backend's config `env` can clear it (`env = { ANTHROPIC_API_KEY = "" }`).
@@ -212,7 +218,7 @@ invited to use any tool it has, to read it. A ✓ means it did not read the file
 evidence rather than proof. In testing, a Codex panelist with this lockdown didn't read the file in
 10 of 10 runs, while the same check caught an unlocked Codex every time.
 
-`so` sets `SECOND_OPINION_DEPTH=1` for every panelist and refuses to start a panel, ping models, or
+`so` sets `SECOND_OPINION_DEPTH=1` for every panelist (including the commands Codex runs) and refuses to start a panel, ping models, or
 uninstall when that variable is present. This stops accidental recursion; it is cooperative, so a
 panelist with a shell could get around it.
 
@@ -226,7 +232,9 @@ shims, which may mangle multi-line arguments).
 
 Each model call gets the full timeout. The chair starts after the panel finishes, and each fallback
 gets its own timeout too, so a run can take about twice the timeout or more. Panelists with repo
-access and a shell (codex, pi) can read your run history in `~/.local/state/second-opinion`.
+access can read files outside the repository: codex through its shell and pi through `read`. That
+includes your run history in `~/.local/state/second-opinion` and other tools' files, such as an
+agent harness's saved conversations.
 
 ## Configuration
 
