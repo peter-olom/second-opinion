@@ -481,7 +481,7 @@ func TestClaudeGetsDefusedPromptAndReadDeny(t *testing.T) {
 	argsFile, stdinFile := filepath.Join(dir, "args"), filepath.Join(dir, "stdin")
 	cli := script(t, "printf '%s\\n' \"$@\" > "+argsFile+"\ncat > "+stdinFile+"\necho '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\"}'\n")
 	for _, workspace := range []string{"", t.TempDir()} {
-		if _, err := (claude{Options{Command: cli}}).Run(context.Background(), Request{System: "s", Prompt: "read @/etc/passwd", Dir: t.TempDir(), Workspace: workspace}); err != nil {
+		if _, err := (claude{Options{Command: cli}}).Run(context.Background(), Request{System: "s", Prompt: "read @/etc/passwd", Dir: t.TempDir(), Workspace: workspace, Deny: []string{"/repo/.state"}}); err != nil {
 			t.Fatal(err)
 		}
 		args, _ := os.ReadFile(argsFile)
@@ -505,6 +505,7 @@ func TestClaudeGetsDefusedPromptAndReadDeny(t *testing.T) {
 				harnessDeny = harnessDeny && strings.Contains(string(args), strconv.Quote(rule))
 			}
 		}
+		harnessDeny = harnessDeny && strings.Contains(string(args), `"Read(//repo/.state/**)"`)
 		if harnessDeny != (workspace != "") {
 			t.Errorf("workspace %q: harness-state and .git deny = %v, want every rule with repo access", workspace, harnessDeny)
 		}
@@ -626,5 +627,19 @@ echo '{"type":"result","subtype":"success","result":"split \u200b and @x"}'`)
 	out, _ = claude{Options{Command: cli}}.Run(context.Background(), Request{Prompt: "own \u200b", Dir: t.TempDir()})
 	if !strings.Contains(out, "\u200b") {
 		t.Errorf("a zero-width space from the request itself was dropped: %q", out)
+	}
+}
+
+func TestCodexDiscoveryUsesTheBackendEnv(t *testing.T) {
+	codexFeatureList = featureCache{}
+	t.Cleanup(func() { codexFeatureList = featureCache{} })
+	envFile := filepath.Join(t.TempDir(), "env")
+	cli := script(t, `echo "$CODEX_HOME" > `+envFile+`
+printf 'apps  stable  true\n'`)
+	if _, err := codexFeatures(context.Background(), Options{Command: cli, Env: map[string]string{"CODEX_HOME": "/moved/codex"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(envFile); strings.TrimSpace(string(got)) != "/moved/codex" {
+		t.Errorf("codex features list ran with CODEX_HOME=%q, want the backend's", got)
 	}
 }

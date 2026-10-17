@@ -127,6 +127,10 @@ type Runner struct {
 	Backends map[string]config.Backend
 	Timeout  time.Duration
 	Progress io.Writer // nil disables progress output
+	// Deny lists absolute paths inside the workspace that panelists must not
+	// read (so's own history and config, when they sit there). Only claude
+	// can enforce it.
+	Deny []string
 
 	mu sync.Mutex
 }
@@ -267,6 +271,7 @@ func (r *Runner) call(ctx context.Context, pl config.Panelist, system, prompt, w
 		Provider:  pl.Provider,
 		Dir:       dir,
 		Workspace: workspace,
+		Deny:      r.Deny,
 	})
 	if err == nil && strings.TrimSpace(out) == "" {
 		err = errors.New("empty response")

@@ -111,15 +111,33 @@ func contains(root, dir string) bool { return Inside(root, dir) }
 // Inside reports whether path is root or inside it, by file identity
 // rather than by spelling: a different letter case on a case-insensitive
 // filesystem, symlinks, and "link/.." (which the OS resolves through the
-// link, unlike a lexical clean) all count as what they are on disk. path
-// need not exist yet.
+// link, unlike a lexical clean) all count as what they are on disk.
+// Neither needs to exist: a missing root is placed by its nearest existing
+// parent plus the names below it, so a deleted file still covers what it
+// was (its deletion in a diff, say).
 func Inside(root, path string) bool {
-	ri, err := os.Stat(root)
-	if err != nil || path == "" {
+	if root == "" || path == "" {
 		return false
 	}
+	base, rest := existingPrefix(physical(root))
+	bi, err := os.Stat(base)
+	if err != nil {
+		return false
+	}
+	fold := caseInsensitive(base)
 	for cur := physical(path); ; {
-		if ci, err := os.Stat(cur); err == nil && os.SameFile(ci, ri) {
+		if ci, err := os.Stat(cur); err == nil && os.SameFile(ci, bi) {
+			// cur is root's existing part; what follows in path must begin
+			// with root's missing names.
+			below := strings.Split(strings.TrimPrefix(strings.TrimPrefix(physical(path), cur), string(filepath.Separator)), string(filepath.Separator))
+			if len(rest) > len(below) {
+				return false
+			}
+			for i, name := range rest {
+				if below[i] != name && !(fold && strings.EqualFold(below[i], name)) {
+					return false
+				}
+			}
 			return true
 		}
 		parent := filepath.Dir(cur)
@@ -129,6 +147,41 @@ func Inside(root, path string) bool {
 		cur = parent
 	}
 }
+
+// existingPrefix splits p into its longest existing ancestor (or p itself)
+// and the names below it that don't exist.
+func existingPrefix(p string) (string, []string) {
+	var rest []string
+	for {
+		if _, err := os.Lstat(p); err == nil {
+			return p, rest
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return p, rest
+		}
+		rest = append([]string{filepath.Base(p)}, rest...)
+		p = parent
+	}
+}
+
+// caseInsensitive reports whether names in dir ignore letter case.
+func caseInsensitive(dir string) bool {
+	up := filepath.Join(dir, ".")
+	alt := strings.ToUpper(dir)
+	if alt == dir {
+		alt = strings.ToLower(dir)
+	}
+	if alt == dir {
+		return false
+	}
+	a, err1 := os.Stat(up)
+	b, err2 := os.Stat(alt)
+	return err1 == nil && err2 == nil && os.SameFile(a, b)
+}
+
+// Physical is physical, for callers outside the package.
+func Physical(path string) string { return physical(path) }
 
 // physical returns path with symlinks and ".." resolved the way the OS
 // does, through its nearest existing parent if it doesn't exist yet. It
@@ -315,9 +368,8 @@ func Diff(ctx context.Context, dir, base, nonce string, exclude ...Exclude) (Con
 		if ex.Path == "" {
 			continue
 		}
-		if _, err := os.Stat(physical(ex.Path)); err != nil {
-			continue // nothing there to send
-		}
+		// Even when it no longer exists: its deletion would show its old
+		// contents.
 		for _, p := range all {
 			if Inside(physical(ex.Path), filepath.Join(root, filepath.FromSlash(p))) {
 				excluded[p], drop[p] = ex.Reason, true

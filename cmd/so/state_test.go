@@ -26,7 +26,16 @@ func TestMain(m *testing.M) {
 	}
 	os.Setenv("HOME", filepath.Join(dir, "home"))
 	os.Setenv("USERPROFILE", filepath.Join(dir, "home"))
-	for _, k := range []string{"PI_CODING_AGENT_DIR", "CODEX_HOME", "CLAUDE_CONFIG_DIR"} {
+	for _, k := range []string{"PI_CODING_AGENT_DIR", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "SECOND_OPINION_CONFIG"} {
+		os.Unsetenv(k)
+	}
+	// The fixtures run git too: keep the developer's git config, and a git
+	// hook's routing variables (which could point at their real index), out.
+	os.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	for _, k := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+		"GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE", "GIT_PREFIX",
+		"GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_TEMPLATE_DIR", "GIT_CEILING_DIRECTORIES"} {
 		os.Unsetenv(k)
 	}
 	code := m.Run()

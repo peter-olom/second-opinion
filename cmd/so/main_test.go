@@ -536,9 +536,13 @@ func TestIgnoredRoutingIsReported(t *testing.T) {
 	if got := ignoredRouting("claude", nil); got != nil {
 		t.Errorf("no settings: %q", got)
 	}
-	os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(`{"env":{"CLAUDE_CODE_USE_BEDROCK":"1"},"hooks":{}}`), 0o600)
-	if got := ignoredRouting("claude", nil); len(got) != 1 || !strings.Contains(got[0], "env.CLAUDE_CODE_USE_BEDROCK") {
+	os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(`{"env":{"CLAUDE_CODE_USE_BEDROCK":"1","DISABLE_TELEMETRY":"1","HTTPS_PROXY":"http://p"},"hooks":{}}`), 0o600)
+	if got := ignoredRouting("claude", nil); len(got) != 1 || !strings.Contains(got[0], "env.CLAUDE_CODE_USE_BEDROCK, env.DISABLE_TELEMETRY, env.HTTPS_PROXY") {
 		t.Errorf("claude = %q", got)
+	}
+	// What so's backend env sets is not reported.
+	if got := ignoredRouting("claude", map[string]string{"CLAUDE_CODE_USE_BEDROCK": "1", "DISABLE_TELEMETRY": "1", "HTTPS_PROXY": "x"}); got != nil {
+		t.Errorf("covered keys should not warn: %q", got)
 	}
 	os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte("model_provider = \"azure\"\n[model_providers.azure]\nname = \"x\"\n"), 0o600)
 	if got := ignoredRouting("codex", nil); len(got) != 1 || !strings.Contains(got[0], "model_provider, model_providers") {
@@ -770,7 +774,7 @@ printf '{"type":"result","subtype":"success","result":"%s"}\n' "$content"
 	out := captureStdout(t, func() {
 		code = run(context.Background(), []string{"doctor", "--canary", "--config", cfgPath, "-w", "claude:x"})
 	})
-	if code != 1 || !strings.Contains(out, "✗ claude:x (denied paths, repo access)") {
+	if code != 1 || !strings.Contains(out, "✗ claude:x (denied paths, repo access): READ A PATH ITS RULES DENY") {
 		t.Errorf("a claude that reads a denied path must fail the canary: exit %d\n%s", code, out)
 	}
 }
@@ -941,5 +945,56 @@ func TestDiffExcludesSosFilesHoweverSpelled(t *testing.T) {
 	}
 	if !strings.Contains(string(prompt), "ordinary") {
 		t.Errorf("the ordinary change is missing:\n%s", prompt)
+	}
+}
+
+func TestDiffExcludesSosFilesAfterTheyAreDeleted(t *testing.T) {
+	unsetEnv(t, backend.EnvGuard)
+	repo := t.TempDir()
+	git := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", repo, "-c", "user.email=a@b", "-c", "user.name=a"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	// Committed by mistake, then deleted: their deletions would carry the
+	// old contents.
+	state := filepath.Join(repo, ".state")
+	os.MkdirAll(filepath.Join(state, "second-opinion", "runs"), 0o700)
+	os.WriteFile(filepath.Join(state, "second-opinion", "runs", history.NewID(time.Now())+".json"), []byte(`{"prompt":"HISTORY-SENTINEL"}`), 0o600)
+	os.WriteFile(filepath.Join(repo, "so.toml"), []byte("# CONFIG-SENTINEL\n"), 0o600)
+	os.WriteFile(filepath.Join(repo, "a.go"), []byte("package a\n"), 0o644)
+	git("add", ".")
+	git("commit", "-q", "-m", "oops")
+	os.RemoveAll(state)
+	os.Remove(filepath.Join(repo, "so.toml"))
+	os.WriteFile(filepath.Join(repo, "a.go"), []byte("package a // ordinary\n"), 0o644)
+
+	fakeDir := t.TempDir()
+	fake := filepath.Join(fakeDir, "pi")
+	got := filepath.Join(fakeDir, "got")
+	os.WriteFile(fake, []byte("#!/bin/sh\ncat > "+got+"\necho ok\n"), 0o755)
+	t.Setenv("XDG_STATE_HOME", state)
+	t.Setenv("SECOND_OPINION_CONFIG", "")
+	t.Chdir(repo)
+	// The config is gone (so runs on built-in defaults), so the fake pi is
+	// found on PATH.
+	t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	captureStderr(t, func() {
+		captureStdout(t, func() {
+			if code := run(context.Background(), []string{"ask", "--config", "so.toml", "--diff", "--no-repo", "-w", "pi:x", "q"}); code != 0 {
+				t.Errorf("exit code = %d", code)
+			}
+		})
+	})
+	prompt, _ := os.ReadFile(got)
+	for _, leak := range []string{"CONFIG-SENTINEL", "HISTORY-SENTINEL"} {
+		if strings.Contains(string(prompt), leak) {
+			t.Errorf("a deleted so file was sent in its deletion (%s):\n%s", leak, prompt)
+		}
+	}
+	if !strings.Contains(string(prompt), "ordinary") || !strings.Contains(string(prompt), "so.toml (deleted; so's config)") {
+		t.Errorf("want the ordinary change and the deletion listed:\n%s", prompt)
 	}
 }

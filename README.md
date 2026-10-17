@@ -222,7 +222,8 @@ global `~/.codex/AGENTS.md` into every Codex panelist, since it has no switch to
 The flags that keep your user settings out also drop any provider routing in them: Bedrock, Vertex,
 `ANTHROPIC_BASE_URL` or `apiKeyHelper` in `~/.claude/settings.json`, and `model_provider` in
 `~/.codex/config.toml`. A panelist then uses the CLI's own login, which may be another account or
-provider than you meant. `so doctor` warns when those settings are present; put what panelists
+provider than you meant. Every other `env` entry there is dropped too, telemetry opt-outs, proxy
+and CA settings included. `so doctor` warns when those settings are present; put what panelists
 need in the backend's `env` in `so`'s config.
 
 A reviewed repository's files can still try to steer a panelist that reads them, as any untrusted

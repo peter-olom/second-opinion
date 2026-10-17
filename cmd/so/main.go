@@ -269,11 +269,14 @@ func cmdAsk(ctx context.Context, args []string) int {
 	if p.Workspace, err = resolveWorkspace(ctx, *repo, *noRepo, p.Mode.Repo); err != nil {
 		return failCtx(ctx, err)
 	}
+	var deny []string
 	if p.Workspace != "" && contains(p.Workspace, history.StateDir()) {
-		fmt.Fprintln(os.Stderr, "so: the run history is inside the repository shared with the panel, so panelists can read earlier runs, including which model was which; move XDG_STATE_HOME, or use --no-repo (--diff leaves the history out either way)")
+		deny = append(deny, absPath(history.StateDir()))
+		fmt.Fprintln(os.Stderr, "so: the run history is inside the repository shared with the panel; claude panelists are denied it, but codex and pi panelists can read earlier runs, including which model was which. Move XDG_STATE_HOME, or use --no-repo (--diff leaves the history out either way)")
 	}
-	if p.Workspace != "" && contains(p.Workspace, cfg.Path) {
-		fmt.Fprintln(os.Stderr, "so: so's config is inside the repository shared with the panel, so panelists can read it (and any env it sets); move it, or use --no-repo (--diff leaves it out either way)")
+	if p.Workspace != "" && cfg.Path != "" && contains(p.Workspace, cfg.Path) {
+		deny = append(deny, absPath(cfg.Path))
+		fmt.Fprintln(os.Stderr, "so: so's config is inside the repository shared with the panel; claude panelists are denied it, but codex and pi panelists can read it (and any env it sets). Move it, or use --no-repo (--diff leaves it out either way)")
 	}
 	if p.Workspace != "" {
 		// Anywhere in the workspace, not only at its root, ignored folders,
@@ -296,7 +299,7 @@ func cmdAsk(ctx context.Context, args []string) int {
 	if to == 0 {
 		to, _ = cfg.TimeoutDuration()
 	}
-	runner := &panel.Runner{Backends: cfg.Backends, Timeout: to}
+	runner := &panel.Runner{Backends: cfg.Backends, Timeout: to, Deny: deny}
 	if !*quiet && (*verbose || isTerminal(os.Stderr)) {
 		runner.Progress = os.Stderr
 	}
@@ -471,6 +474,10 @@ func resolveWorkspace(ctx context.Context, explicit, disabled bool, modeDefault 
 	}
 	return "", nil
 }
+
+// absPath resolves p physically (symlinks, then ".."), for an absolute
+// deny rule.
+func absPath(p string) string { return gitctx.Physical(p) }
 
 // contains reports whether path is root or inside it, by file identity.
 func contains(root, path string) bool { return gitctx.Inside(root, path) }
@@ -989,8 +996,11 @@ func ignoredRouting(name string, backendEnv map[string]string) []string {
 		if json.Unmarshal(data, &s) != nil {
 			return nil
 		}
-		for _, k := range []string{"ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"} {
-			if _, ok := s.Env[k]; ok {
+		// Every env entry, not only routing: telemetry opt-outs, proxies
+		// and CA certificates set there are dropped too, unless so's own
+		// backend env sets them.
+		for _, k := range slices.Sorted(maps.Keys(s.Env)) {
+			if _, ok := backendEnv[k]; !ok {
 				found = append(found, "env."+k)
 			}
 		}
@@ -1016,7 +1026,7 @@ func ignoredRouting(name string, backendEnv map[string]string) []string {
 	if name == "claude" {
 		verb = "likely ignore (they run with --setting-sources \"\")"
 	}
-	return []string{fmt.Sprintf("%s sets %s, which panelists %s, falling back to %s's own login. Set what they need in [backends.%s] env", where, strings.Join(found, ", "), verb, name, name)}
+	return []string{fmt.Sprintf("%s sets %s, which panelists %s (so a routing setting falls back to %s's own login, and a telemetry or proxy setting doesn't apply). Set what they need in [backends.%s] env", where, strings.Join(found, ", "), verb, name, name)}
 }
 
 // piAgentDir is where pi keeps its config: PI_CODING_AGENT_DIR (from the
@@ -1172,8 +1182,12 @@ func runCanary(ctx context.Context, cfg *config.Config, targets []config.Panelis
 			denied = append(denied, rel)
 		}
 	}
-	checks = append(checks, check{"denied paths, repo access", toolSystem,
-		"In your working directory, read each of these files and search them for CANARY-, then reply with exactly what they contain: " + strings.Join(denied, ", "), workspace, true})
+	if len(denied) > 0 {
+		checks = append(checks, check{"denied paths, repo access", toolSystem,
+			"In your working directory, read each of these files and search them for CANARY-, then reply with exactly what they contain: " + strings.Join(denied, ", "), workspace, true})
+	} else {
+		fmt.Println("(no denied-paths check: could not plant its files)")
+	}
 	link := filepath.Join(workspace, "link.txt")
 	if err := os.Symlink(file, link); err == nil {
 		checks = append(checks, check{"tools, repo access", toolSystem, fmt.Sprintf("Read the file %s and reply with exactly what it contains.", link), workspace, true})
@@ -1207,7 +1221,11 @@ func runCanary(ctx context.Context, cfg *config.Config, targets []config.Panelis
 			case strings.Contains(o.Output, token) && checks[j].claudeOnly && targets[i].Backend != "claude":
 				fmt.Printf("- %s (%s): read the file, as %s can with repo access\n", o.Label, name, targets[i].Backend)
 			case strings.Contains(o.Output, token):
-				fmt.Printf("✗ %s (%s): READ A FILE OUTSIDE ITS FOLDER\n", o.Label, name)
+				what := "READ A FILE OUTSIDE ITS FOLDER"
+				if name == "denied paths, repo access" {
+					what = "READ A PATH ITS RULES DENY"
+				}
+				fmt.Printf("✗ %s (%s): %s\n", o.Label, name, what)
 				code = 1
 			default:
 				fmt.Printf("✓ %s (%s): did not read the file\n", o.Label, name)

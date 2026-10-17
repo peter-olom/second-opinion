@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/peter-olom/second-opinion/internal/harness"
@@ -44,6 +45,11 @@ func (c claude) Run(ctx context.Context, req Request) (string, error) {
 		deny := []string{"Read(./.git)", "Read(./.git/**)", "Read(**/.git)", "Read(**/.git/**)"}
 		for _, p := range harness.Names {
 			deny = append(deny, "Read(./"+p+")", "Read(./"+p+"/**)", "Read(**/"+p+")", "Read(**/"+p+"/**)")
+		}
+		// Absolute paths take a leading "//" in Claude Code's rules.
+		for _, p := range req.Deny {
+			p = filepath.ToSlash(p)
+			deny = append(deny, "Read(/"+p+")", "Read(/"+p+"/**)")
 		}
 		rules, _ := json.Marshal(map[string]any{"permissions": map[string]any{"deny": deny}})
 		args = append(args, "--settings", string(rules))

@@ -41,6 +41,9 @@ type Request struct {
 	Dir string
 	// Workspace, if set, is a repository the model may read (but not modify).
 	Workspace string
+	// Deny lists absolute paths in the workspace the model must not read.
+	// claude enforces it with deny rules; codex and pi can't.
+	Deny []string
 }
 
 // cwd is the directory the CLI runs in.
