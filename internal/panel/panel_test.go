@@ -387,7 +387,7 @@ func TestClaudeChairGetsDefusedMentions(t *testing.T) {
 		t.Fatalf("chair failed: %+v", res.Synthesis)
 	}
 	data, _ := os.ReadFile(chairIn)
-	if !strings.Contains(string(data), "@\u200b/etc/passwd") || strings.Contains(string(data), "see @/etc/passwd") {
+	if !strings.Contains(string(data), "\u200b@/etc/passwd") || strings.Contains(string(data), "see @/etc/passwd") {
 		t.Errorf("the claude chair got a panelist's mention undefused:\n%s", data)
 	}
 }

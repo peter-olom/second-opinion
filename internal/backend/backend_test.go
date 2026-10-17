@@ -451,17 +451,17 @@ func TestCodexDiscoveryTimeoutIsATimeout(t *testing.T) {
 
 func TestClaudeMentionsAreDefused(t *testing.T) {
 	for in, want := range map[string]string{
-		"@/etc/passwd":                   "@\u200b/etc/passwd",
-		"see @~/.aws/credentials please": "see @\u200b~/.aws/credentials please",
-		"```\n@x\n```":                   "```\n@\u200bx\n```",
-		"\u00a0@x (@y) \"@z\"":           "\u00a0@\u200bx (@\u200by) \"@\u200bz\"",
+		"@/etc/passwd":                   "\u200b@/etc/passwd",
+		"see @~/.aws/credentials please": "see \u200b@~/.aws/credentials please",
+		"```\n@x\n```":                   "```\n\u200b@x\n```",
+		"\u00a0@x (@y) \"@z\"":           "\u00a0\u200b@x (\u200b@y) \"\u200b@z\"",
 		"mail me at a.b@example.com":     "mail me at a.b@example.com",
-		"@Override\n\t@Test":             "@\u200bOverride\n\t@\u200bTest",
-		"+@/etc/passwd":                  "+@\u200b/etc/passwd",
-		"-@x .@y _@z %@w":                "-@\u200bx .@\u200by _@\u200bz %@\u200bw",
-		"é@/etc/passwd":                  "é@\u200b/etc/passwd",
-		"@@/x":                           "@\u200b@\u200b/x",
-		"+\tsee @~/.ssh/id_rsa":          "+\tsee @\u200b~/.ssh/id_rsa",
+		"@Override\n\t@Test":             "\u200b@Override\n\t\u200b@Test",
+		"+@/etc/passwd":                  "+\u200b@/etc/passwd",
+		"-@x .@y _@z %@w":                "-\u200b@x .\u200b@y _\u200b@z %\u200b@w",
+		"é@/etc/passwd":                  "é\u200b@/etc/passwd",
+		"@@/x":                           "\u200b@\u200b@/x",
+		"+\tsee @~/.ssh/id_rsa":          "+\tsee \u200b@~/.ssh/id_rsa",
 	} {
 		if got := defuseMentions(in); got != want {
 			t.Errorf("defuseMentions(%q) = %q, want %q", in, got, want)
@@ -479,7 +479,7 @@ func TestClaudeGetsDefusedPromptAndReadDeny(t *testing.T) {
 		}
 		args, _ := os.ReadFile(argsFile)
 		stdin, _ := os.ReadFile(stdinFile)
-		if !strings.Contains(string(stdin), "@\u200b/etc/passwd") {
+		if !strings.Contains(string(stdin), "\u200b@/etc/passwd") {
 			t.Errorf("workspace %q: claude got an undefused mention: %q", workspace, stdin)
 		}
 		if !strings.Contains(string(args), strings.TrimSpace(mentionNote)) {
@@ -508,7 +508,7 @@ func TestConfigArgsComeAfterSoFlags(t *testing.T) {
 
 func TestClaudeAnswersLoseTheDefusingCharacter(t *testing.T) {
 	cli := script(t, `cat >/dev/null
-echo '{"type":"result","subtype":"success","result":"use @\u200bOverride and \"@\u200btypes/node\""}'`)
+echo '{"type":"result","subtype":"success","result":"use \u200b@Override and \"\u200b@types/node\""}'`)
 	out, err := claude{Options{Command: cli}}.Run(context.Background(), Request{Prompt: "q", Dir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
@@ -564,5 +564,31 @@ echo '{"type":"result","subtype":"success","result":"ok"}'`)
 		if strings.Contains(string(args), sentinel) || !strings.Contains(string(stdin), sentinel) {
 			t.Errorf("%s: the prompt should be on stdin only; argv %q", name, args)
 		}
+	}
+}
+
+func TestDefusedMentionMakesNoPathToken(t *testing.T) {
+	// "@" + U+200B + "/c" would mention a relative path "\u200b/c", which a
+	// repository can provide (a folder named U+200B with a symlink out).
+	// The marker must come before the @, leaving nothing after it.
+	got := defuseMentions("see @/c")
+	if strings.Contains(got, "@\u200b") || got != "see \u200b@/c" {
+		t.Errorf("defuseMentions = %q, want the marker before the @", got)
+	}
+	if restoreMentions(got) != "see @/c" {
+		t.Errorf("restoreMentions(%q) = %q", got, restoreMentions(got))
+	}
+}
+
+func TestRipgrepConfigIsDropped(t *testing.T) {
+	t.Setenv("RIPGREP_CONFIG_PATH", "evil.rgrc")
+	envFile := filepath.Join(t.TempDir(), "env")
+	cli := script(t, "env > "+envFile+"\ncat >/dev/null\necho ok\n")
+	if _, err := run(context.Background(), "x", Options{Command: cli, Env: map[string]string{"RIPGREP_CONFIG_PATH": "also.rgrc", "KEEP": "1"}}, t.TempDir(), nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	env, _ := os.ReadFile(envFile)
+	if strings.Contains(string(env), "RIPGREP_CONFIG_PATH") || !strings.Contains(string(env), "KEEP=1") {
+		t.Errorf("RIPGREP_CONFIG_PATH should be dropped, other env kept:\n%s", env)
 	}
 }

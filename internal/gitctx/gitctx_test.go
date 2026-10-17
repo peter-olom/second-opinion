@@ -230,6 +230,7 @@ func TestDiffDoesNotRunTextconv(t *testing.T) {
 	if _, err := os.Stat(marker); err == nil {
 		t.Error("the textconv driver ran")
 	}
+	gitRunsDriver(t, dir, marker, "diff", "HEAD")
 }
 
 func TestDiffCancels(t *testing.T) {
@@ -311,6 +312,16 @@ func TestFilterDriversNeverRun(t *testing.T) {
 		if _, err := os.Stat(m); err == nil {
 			t.Errorf("a filter driver from the git config ran during --diff (%s)", filepath.Base(m))
 		}
+	}
+	// (Plain git never selects the empty-named driver through "filter=",
+	// so it has no control; so switches it off regardless.)
+	for _, m := range []string{marker + ".clean", marker + ".process"} {
+		// New times, so git can't trust its cached stat data and compares again.
+		later := time.Now().Add(time.Minute)
+		for _, f := range []string{"a.x", "b.y", "c.z"} {
+			os.Chtimes(filepath.Join(dir, f), later, later)
+		}
+		gitRunsDriver(t, dir, m, "diff", "HEAD")
 	}
 }
 
@@ -914,6 +925,7 @@ func TestFilterDriversNeverRunWithGitConfigSet(t *testing.T) {
 	if _, err := os.Stat(marker); err == nil {
 		t.Error("a filter driver ran with GIT_CONFIG set")
 	}
+	gitRunsDriver(t, dir, marker, "diff", "HEAD")
 }
 
 func TestGitNeverPromptsOrFetches(t *testing.T) {
@@ -923,4 +935,51 @@ func TestGitNeverPromptsOrFetches(t *testing.T) {
 			t.Errorf("git's environment lacks %s", want)
 		}
 	}
+}
+
+func TestSubmoduleFiltersNeverRun(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell filter")
+	}
+	sub := newRepo(t)
+	write(t, sub, ".gitattributes", "*.x filter=subf\n")
+	write(t, sub, "a.x", "one\n")
+	run(t, sub, "add", ".")
+	run(t, sub, "commit", "-q", "-m", "x")
+	dir := newRepo(t)
+	run(t, dir, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "sub")
+	run(t, dir, "commit", "-q", "-m", "sub")
+	inner := filepath.Join(dir, "sub")
+	marker := filepath.Join(t.TempDir(), "ran")
+	// A driver in the submodule's own config, as git-crypt would write it.
+	run(t, inner, "config", "filter.subf.clean", "sh -c 'touch "+marker+"; cat'")
+	write(t, inner, "a.x", "two\n")
+	write(t, dir, "a.go", "package a\n")
+
+	if _, err := Diff(context.Background(), dir, "HEAD", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a submodule's filter driver ran during --diff")
+	}
+	// Positive control: plain git diff does run it, so the test is real.
+	run(t, dir, "diff", "HEAD")
+	if _, err := os.Stat(marker); err != nil {
+		t.Skip("this git does not run submodule filters here; nothing to check")
+	}
+}
+
+// gitRunsDriver is a positive control for the "driver never ran" tests:
+// plain git, run the same way on the same fixture, must create the marker,
+// or the test would pass without checking anything.
+func gitRunsDriver(t *testing.T, dir, marker string, args ...string) {
+	t.Helper()
+	os.Remove(marker)
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Run() // a failing driver may make git fail; only the marker counts
+	if _, err := os.Stat(marker); err != nil {
+		t.Errorf("control: plain git %v never ran the driver (%s), so this test checks nothing", args, filepath.Base(marker))
+	}
+	os.Remove(marker)
 }

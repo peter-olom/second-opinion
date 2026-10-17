@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -192,7 +193,17 @@ chair = { backend = "pi", model = "chair" }
 		t.Errorf("runs show should stay blind without --reveal:\n%s", blind)
 	}
 	for _, extra := range [][]string{{"--json"}, {"--prompt"}} {
-		out := captureStdout(t, func() { run(context.Background(), append([]string{"runs", "show", "last"}, extra...)) })
+		var code int
+		out := captureStdout(t, func() { code = run(context.Background(), append([]string{"runs", "show", "last"}, extra...)) })
+		if code != 0 || !strings.Contains(out, id) || !strings.Contains(out, "is this ok?") {
+			t.Errorf("runs show last %v = exit %d; want the run and its prompt:\n%s", extra, code, out)
+		}
+		if extra[0] == "--json" {
+			var rec history.Record
+			if err := json.Unmarshal([]byte(out), &rec); err != nil || rec.ID != id || len(rec.Result.Opinions) != 2 {
+				t.Errorf("runs show --json is not the record (%v):\n%s", err, out)
+			}
+		}
 		if strings.Contains(out, "pi:alpha") || strings.Contains(out, `"model": "alpha"`) {
 			t.Errorf("runs show last %v should stay blind without --reveal:\n%s", extra, out)
 		}
@@ -522,20 +533,26 @@ func TestIgnoredRoutingIsReported(t *testing.T) {
 	claudeDir, codexDir := t.TempDir(), t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
 	t.Setenv("CODEX_HOME", codexDir)
-	if got := ignoredRouting("claude"); got != nil {
+	if got := ignoredRouting("claude", nil); got != nil {
 		t.Errorf("no settings: %q", got)
 	}
 	os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(`{"env":{"CLAUDE_CODE_USE_BEDROCK":"1"},"hooks":{}}`), 0o600)
-	if got := ignoredRouting("claude"); len(got) != 1 || !strings.Contains(got[0], "env.CLAUDE_CODE_USE_BEDROCK") {
+	if got := ignoredRouting("claude", nil); len(got) != 1 || !strings.Contains(got[0], "env.CLAUDE_CODE_USE_BEDROCK") {
 		t.Errorf("claude = %q", got)
 	}
 	os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte("model_provider = \"azure\"\n[model_providers.azure]\nname = \"x\"\n"), 0o600)
-	if got := ignoredRouting("codex"); len(got) != 1 || !strings.Contains(got[0], "model_provider, model_providers") {
+	if got := ignoredRouting("codex", nil); len(got) != 1 || !strings.Contains(got[0], "model_provider, model_providers") {
 		t.Errorf("codex = %q", got)
 	}
 	os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte("model = \"gpt\"\n"), 0o600)
-	if got := ignoredRouting("codex"); got != nil {
+	if got := ignoredRouting("codex", nil); got != nil {
 		t.Errorf("plain config should not warn: %q", got)
+	}
+	// CODEX_HOME given only in the backend's config env is the one used.
+	moved := t.TempDir()
+	os.WriteFile(filepath.Join(moved, "config.toml"), []byte("model_provider = \"azure\"\n"), 0o600)
+	if got := ignoredRouting("codex", map[string]string{"CODEX_HOME": moved}); len(got) != 1 {
+		t.Errorf("backend env CODEX_HOME was not used: %q", got)
 	}
 }
 
@@ -582,5 +599,22 @@ func TestUnwritableHistoryIsReportedOnce(t *testing.T) {
 	}
 	if strings.Contains(out, "run `") {
 		t.Errorf("the answer shows a run ID for an unrecorded run:\n%s", out)
+	}
+}
+
+func TestAskPrunesEvenWhenItStopsEarly(t *testing.T) {
+	unsetEnv(t, backend.EnvGuard)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	runs := history.Dir()
+	os.MkdirAll(runs, 0o700)
+	old := filepath.Join(runs, "20200101-000000-0badc0de.json")
+	os.WriteFile(old, []byte("{}"), 0o600)
+	captureStderr(t, func() {
+		if code := run(context.Background(), []string{"ask", "--config", fakePiConfig(t), "-m", "no-such-mode", "-w", "pi:x", "q"}); code == 0 {
+			t.Error("an unknown mode should fail")
+		}
+	})
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Errorf("an expired run survived an early exit (err %v)", err)
 	}
 }

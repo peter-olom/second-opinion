@@ -101,9 +101,19 @@ func Command(name string, o Options) string {
 // run executes the backend CLI with the prompt on stdin and returns its stdout.
 // The panelist guard is always set, last, so configured env cannot clear it.
 func run(ctx context.Context, name string, o Options, dir string, args []string, stdin string) ([]byte, error) {
-	env := os.Environ()
+	var env []string
+	for _, kv := range os.Environ() {
+		// A ripgrep config can set --pre, a command run on every file
+		// searched; pi's (and likely claude's) grep honour it. Relative,
+		// it would resolve inside the reviewed repository.
+		if !strings.HasPrefix(kv, "RIPGREP_CONFIG_PATH=") {
+			env = append(env, kv)
+		}
+	}
 	for k, v := range o.Env {
-		env = append(env, k+"="+v)
+		if k != "RIPGREP_CONFIG_PATH" {
+			env = append(env, k+"="+v)
+		}
 	}
 	env = append(env, EnvGuard+"=1")
 	return execCLI(ctx, Command(name, o), append(args, o.Args...), dir, env, stdin)

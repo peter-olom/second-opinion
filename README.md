@@ -82,7 +82,7 @@ In markdown output, each answer (and each error) is a blockquote: every line sta
 Nothing inside a blockquote can be a top-level heading, and Markdown closes anything left open in it
 (an unclosed code fence, say) where the quote ends, so a model's text can't pass for one of `so`'s
 sections (`## Panel synthesis`, `## Panel key`) or hide the ones after it, in the text or in a
-Markdown renderer. HTML comments (`<!--`) outside code are escaped too; other raw HTML is left as is,
+Markdown renderer. HTML comments (`<!--`) outside fenced code are escaped too; other raw HTML is left as is,
 so a viewer that renders raw HTML without sanitizing it could still be misled. Answer headings are
 also moved two levels down to read as subsections, and terminal control characters are removed. Use
 `--format json` when a program reads the result.
@@ -259,7 +259,8 @@ backend's config `env` can clear it (`env = { ANTHROPIC_API_KEY = "" }`).
 Claude Code reads any file named in an `@path` mention in its prompt, in code blocks too, whatever
 its tools allow, and even outside the repository. In testing, an attached file mentioning
 `@/some/other/file` made claude send that file's contents. So `so` puts an invisible zero-width
-space after every `@` that isn't part of an email-like word in what it sends claude (panelists and
+space before every `@` that isn't part of an email-like word (before, not after: after it, the
+mention would name a relative path that a repository could provide, which was expanded in testing) in what it sends claude (panelists and
 chair), tells the model so, and without repo access also denies claude every read. Codex and pi
 don't expand mentions in a prompt on stdin.
 

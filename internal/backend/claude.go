@@ -99,20 +99,23 @@ func claudeEffort(e string) string {
 // --tools says and, with repo access, even outside the repository. A diff,
 // an attached file, or a panelist's answer to the chair could therefore make
 // claude send ~/.aws/credentials or the like to the provider. A zero-width
-// space after each @ that starts a word stops the expansion (verified with
-// Claude Code 2.1); the note tells the model to read past it. To fail closed
-// on whatever counts as a word start (Unicode spaces, punctuation, a diff's
-// "+"), every @ is defused unless the character before it in the original
+// space before each @ stops the expansion: the @ no longer starts a word
+// (verified with Claude Code 2.1). It must go before, not after: "@" then a
+// zero-width space then "/c" is still a mention, of a relative path that a
+// reviewed repository can supply (a folder named U+200B holding a symlink
+// out of the repository was expanded in testing). To fail closed on
+// whatever counts as a word start (Unicode spaces, punctuation, a diff's
+// "+"), every @ is marked unless the character before it in the original
 // text is an ASCII letter or digit, as in an email address.
 func defuseMentions(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
 	prev := rune(-1)
 	for _, r := range s {
-		b.WriteRune(r)
 		if r == '@' && !asciiAlnum(prev) {
 			b.WriteRune('\u200b')
 		}
+		b.WriteRune(r)
 		prev = r
 	}
 	return b.String()
@@ -122,6 +125,7 @@ func asciiAlnum(r rune) bool {
 	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
 }
 
-func restoreMentions(s string) string { return strings.ReplaceAll(s, "@\u200b", "@") }
+// restoreMentions undoes defuseMentions in what claude echoes back.
+func restoreMentions(s string) string { return strings.ReplaceAll(s, "\u200b@", "@") }
 
-const mentionNote = "\n\n(so inserted an invisible zero-width space after each @ that starts a word in the request, to stop file mentions from being expanded. Read past it; it is not part of the text.)"
+const mentionNote = "\n\n(so inserted an invisible zero-width space before each @ that starts a word in the request, to stop file mentions from being expanded. Read past it; it is not part of the text.)"

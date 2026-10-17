@@ -102,7 +102,7 @@ func Save(dir string, r Record, maxAge time.Duration) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	if err := os.Link(tmp, final); err != nil {
+	if err := publish(tmp, final); err != nil {
 		return err
 	}
 	Prune(dir, time.Now().Add(-maxAge))
@@ -116,6 +116,23 @@ func IsTempFile(name string) bool {
 		return IsRunFile(rest)
 	}
 	return strings.HasPrefix(name, ".probe-")
+}
+
+// link is os.Link, replaceable in tests.
+var link = os.Link
+
+// publish moves the finished record into place without ever overwriting
+// one: a hard link where the filesystem has them, else a rename after
+// checking the name is free (the ID is random, so nothing else claims it).
+func publish(tmp, final string) error {
+	err := link(tmp, final)
+	if err == nil || errors.Is(err, os.ErrExist) {
+		return err
+	}
+	if _, statErr := os.Lstat(final); statErr == nil {
+		return fmt.Errorf("run %s already exists", filepath.Base(final))
+	}
+	return os.Rename(tmp, final)
 }
 
 // Writable reports whether runs can be saved in dir, so a run ID is only

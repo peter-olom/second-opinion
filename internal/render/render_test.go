@@ -262,3 +262,13 @@ func TestHTMLCommentsCannotHideLaterSections(t *testing.T) {
 		t.Errorf("Quote = %q", q)
 	}
 }
+
+func TestClippedChairInputIsShown(t *testing.T) {
+	res := anonymousResult()
+	res.ChairClipped = []string{"Panelist B"}
+	var b strings.Builder
+	Markdown(&b, res)
+	if !strings.Contains(b.String(), "The chair saw only the first 256 KB of the answer from Panelist B") {
+		t.Errorf("the clipped-input note is missing:\n%s", b.String())
+	}
+}

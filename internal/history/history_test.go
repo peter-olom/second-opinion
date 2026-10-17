@@ -1,6 +1,7 @@
 package history
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -270,5 +271,19 @@ func TestPruneRemovesStaleTempFiles(t *testing.T) {
 		if _, err := os.Stat(p); (err == nil) != want {
 			t.Errorf("%s: exists = %v, want %v", filepath.Base(p), err == nil, want)
 		}
+	}
+}
+
+func TestSaveWorksWithoutHardLinks(t *testing.T) {
+	orig := link
+	link = func(string, string) error { return &os.LinkError{Op: "link", Err: errors.ErrUnsupported} }
+	t.Cleanup(func() { link = orig })
+	dir := t.TempDir()
+	r := Record{ID: NewID(time.Now()), Time: time.Now()}
+	if err := Save(dir, r, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Load(dir, r.ID); err != nil || got.ID != r.ID {
+		t.Errorf("Load = %v, %v; want the record saved by rename", got.ID, err)
 	}
 }

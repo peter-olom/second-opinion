@@ -217,6 +217,8 @@ func cmdAsk(ctx context.Context, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
+	// Expired runs go now, so even a run that stops early prunes them.
+	history.Prune(history.Dir(), time.Now().Add(-cfg.Retention()))
 	p, err := resolvePanel(cfg, *profile, *mode, *with, *chair, *noChair)
 	if err != nil {
 		return fail(err)
@@ -765,7 +767,7 @@ func cmdDoctor(ctx context.Context, args []string) int {
 		for _, k := range apiKeyVars(name, bc.Env) {
 			fmt.Printf("  ! %s is set; %s may bill that API account rather than your subscription\n", k, name)
 		}
-		for _, w := range ignoredRouting(name) {
+		for _, w := range ignoredRouting(name, bc.Env) {
 			fmt.Printf("  ! %s\n", w)
 		}
 		if name == "pi" {
@@ -908,10 +910,15 @@ func apiKeyVars(name string, env map[string]string) []string {
 // Codex settings, which panelists run without (--setting-sources "",
 // --ignore-user-config). Without it a panelist falls back to the CLI's own
 // login, which may be a different provider or account than the user meant.
-func ignoredRouting(name string) []string {
+func ignoredRouting(name string, backendEnv map[string]string) []string {
 	home, _ := os.UserHomeDir()
+	// The backend's config env applies to panelists, so it decides first.
 	dir := func(env, def string) string {
-		if v := os.Getenv(env); filepath.IsAbs(v) {
+		v, ok := backendEnv[env]
+		if !ok {
+			v = os.Getenv(env)
+		}
+		if filepath.IsAbs(v) {
 			return v
 		}
 		return filepath.Join(home, def)

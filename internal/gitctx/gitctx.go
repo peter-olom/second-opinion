@@ -114,11 +114,13 @@ func Diff(ctx context.Context, dir, base, nonce string) (Context, error) {
 	// Filter drivers from the git config (clean, process) would run on
 	// stat-dirty files while git compares the working tree, and every
 	// filtered file is dropped anyway, so they are all switched off.
+	// Submodules are not checked for dirt (only their commits count), since
+	// git would run their own config's filters for that.
 	noFilters, err := filtersOff(ctx, root)
 	if err != nil {
 		return Context{}, err
 	}
-	statuses, err := gitPaths(ctx, root, append(noFilters, "diff", "--name-status", "--no-renames", "-z", from, "--")...)
+	statuses, err := gitPaths(ctx, root, append(noFilters, "diff", "--name-status", "--no-renames", "--ignore-submodules=dirty", "-z", from, "--")...)
 	if err != nil {
 		return Context{}, err
 	}
@@ -197,7 +199,7 @@ func Diff(ctx context.Context, dir, base, nonce string) (Context, error) {
 		return true
 	}, append(noFilters, "-c", "core.quotePath=false", "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false",
 		"diff", "--src-prefix=a/", "--dst-prefix=b/", "--submodule=short",
-		"--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", from, "--")...)
+		"--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--ignore-submodules=dirty", from, "--")...)
 	if err != nil {
 		return Context{}, err
 	}
