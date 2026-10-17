@@ -457,6 +457,10 @@ func TestClaudeMentionsAreDefused(t *testing.T) {
 		"\u00a0@x (@y) \"@z\"":           "\u00a0@\u200bx (@\u200by) \"@\u200bz\"",
 		"mail me at a.b@example.com":     "mail me at a.b@example.com",
 		"@Override\n\t@Test":             "@\u200bOverride\n\t@\u200bTest",
+		"+@/etc/passwd":                  "+@\u200b/etc/passwd",
+		"-@x .@y _@z %@w":                "-@\u200bx .@\u200by _@\u200bz %@\u200bw",
+		"@@/x":                           "@\u200b@\u200b/x",
+		"+\tsee @~/.ssh/id_rsa":          "+\tsee @\u200b~/.ssh/id_rsa",
 	} {
 		if got := defuseMentions(in); got != want {
 			t.Errorf("defuseMentions(%q) = %q, want %q", in, got, want)
@@ -476,6 +480,9 @@ func TestClaudeGetsDefusedPromptAndReadDeny(t *testing.T) {
 		stdin, _ := os.ReadFile(stdinFile)
 		if !strings.Contains(string(stdin), "@\u200b/etc/passwd") {
 			t.Errorf("workspace %q: claude got an undefused mention: %q", workspace, stdin)
+		}
+		if !strings.Contains(string(args), strings.TrimSpace(mentionNote)) {
+			t.Errorf("workspace %q: the system prompt lacks the note about defused mentions", workspace)
 		}
 		deny := strings.Contains(string(args), `{"permissions":{"deny":["Read"]}}`)
 		if deny != (workspace == "") {

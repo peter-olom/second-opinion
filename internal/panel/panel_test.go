@@ -11,6 +11,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/peter-olom/second-opinion/internal/backend"
 	"github.com/peter-olom/second-opinion/internal/config"
 )
 
@@ -138,8 +139,8 @@ func TestSystemPromptsDescribeRepoAccess(t *testing.T) {
 	if strings.Contains(got+chair, "alice") {
 		t.Error("the workspace path should not be sent to the models")
 	}
-	if strings.Contains(got, "rather than surveying") {
-		t.Error("the shared preamble must not tell audit panelists to stay narrow")
+	if strings.Contains(got, "rather than surveying") || !strings.Contains(got, "across the project for an audit") {
+		t.Error("the shared preamble must let an audit read across the project")
 	}
 	if chair := ChairSystem("review", m, Options{}); strings.Contains(chair, "caller's repository") {
 		t.Error("chair prompt without a workspace should not mention repo access")
@@ -323,6 +324,34 @@ func TestAnonymousStartLinesAreInLetterOrder(t *testing.T) {
 		}
 		if want := []string{"Panelist A", "Panelist B", "Panelist C"}; !slices.Equal(starts, want) {
 			t.Fatalf("start lines = %q, want %q", starts, want)
+		}
+	}
+}
+
+func TestChairClippedAnswersAreReported(t *testing.T) {
+	fake := fakeCLI(t, `
+while [ $# -gt 0 ]; do [ "$1" = --model ] && model=$2; shift; done
+cat >/dev/null
+if [ "$model" = big ]; then head -c 300000 /dev/zero | tr '\\0' x; else echo small; fi`)
+	runner := &Runner{Backends: map[string]config.Backend{"pi": {Command: fake}}}
+	p := Panel{
+		ModeName:  "general",
+		Panelists: []config.Panelist{{Backend: "pi", Model: "big"}, {Backend: "pi", Model: "small"}},
+		Chair:     &config.Panelist{Backend: "pi", Model: "chair"},
+	}
+	res := runner.Run(context.Background(), p, "q")
+	if len(res.ChairClipped) != 1 || res.ChairClipped[0] != "pi:big" {
+		t.Errorf("ChairClipped = %q, want the big answer's panelist", res.ChairClipped)
+	}
+}
+
+func TestConfigAcceptsEveryBackend(t *testing.T) {
+	// config keeps its own list of backend names (it can't import backend).
+	for _, name := range backend.Names() {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		os.WriteFile(path, []byte("[backends."+name+"]\ncommand = \""+name+"\"\n"), 0o644)
+		if _, err := config.Load(path); err != nil {
+			t.Errorf("backend %s: %v", name, err)
 		}
 	}
 }

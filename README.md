@@ -74,7 +74,8 @@ so ask -p panel --format json "..."                                        # mac
 ```
 
 An ad-hoc `--with` panel of two or more models is chaired by `default_chair` if your config sets
-one (or `--chair`), and the chair receives the whole request and every answer. Add `--no-chair` to
+one (or `--chair`), and the chair receives the whole request and every answer (each cut at 256 KB;
+the synthesis says when it saw only part of one). Add `--no-chair` to
 send the request only to the models you named.
 
 In markdown output, each answer (and each error) is a blockquote: every line starts with `> `.
@@ -145,7 +146,7 @@ answer has no run ID.
 so runs                          # recent runs: ID, profile, mode, how many answered, prompt
 so runs show last                # reprint a run (still anonymous)
 so runs show a3f9 --reveal       # unblind it: append the panel key (any unique part of the ID works)
-so runs show a3f9 --prompt       # include the prompt the panel received (--json for the exact bytes)
+so runs show a3f9 --prompt       # include the prompt the panel was sent (--json for the stored bytes)
 so runs show a3f9 --json         # the record as JSON (still anonymous without --reveal)
 ```
 
@@ -204,7 +205,7 @@ reach differs, and these are the tested guarantees:
 | pi | No tools (`--no-tools`) and no context files. | `read`, `grep`, `find`, `ls`, which are not confined to the repository. Still no context files (`--no-context-files`), so no `AGENTS.md` is loaded. |
 
 Claude also gets `--setting-sources "" --strict-mcp-config` (in testing, a repository's `CLAUDE.md`
-did not load), codex gets `--ignore-user-config --ignore-rules`, and pi gets `--no-extensions
+did not load; a user-level `~/.claude/CLAUDE.md` was not tested), codex gets `--ignore-user-config --ignore-rules`, and pi gets `--no-extensions
 --no-skills --no-approve` (your pi settings, such as the default model, still apply). Every
 panelist is told not to use tools without repo access. One exception: Codex still loads your
 global `~/.codex/AGENTS.md` into every Codex panelist, since it has no switch to turn that off.
@@ -372,7 +373,7 @@ If you change a panelist `format`, check whether the chair's `chair_format` stil
 
 ```bash
 so modes                  # lists modes, marking [customized] built-ins and [custom] modes
-so modes review           # the exact system prompts panelists and the chair receive
+so modes review           # the system prompts panelists and the chair receive (claude and pi get a line more)
 so modes review --toml    # the full mode as TOML, to paste into your config and edit
 ```
 

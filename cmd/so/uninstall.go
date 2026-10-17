@@ -50,6 +50,9 @@ func cmdUninstall(ctx context.Context, args []string) int {
 		return 3
 	}
 
+	if *cfgPath == "" {
+		return fail(errors.New("no config location: HOME is unset or not absolute; set it, or pass --config"))
+	}
 	cfg, cfgParentIsLink, err := resolveConfigPath(*cfgPath)
 	if err != nil {
 		return fail(fmt.Errorf("%w; nothing was removed", err))

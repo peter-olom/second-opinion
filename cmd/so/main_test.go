@@ -477,3 +477,27 @@ panelists = [{ backend = "pi", model = "a" }, { backend = "pi", model = "b" }]
 		}
 	}
 }
+
+func TestRunsShowPromptIsQuoted(t *testing.T) {
+	unsetEnv(t, backend.EnvGuard)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "fake-pi")
+	os.WriteFile(fake, []byte("#!/bin/sh\ncat >/dev/null\necho ok\n"), 0o755)
+	cfg := filepath.Join(dir, "config.toml")
+	os.WriteFile(cfg, []byte(stubOtherBackends+"[backends.pi]\ncommand = \""+fake+"\"\n"), 0o644)
+	captureStdout(t, func() {
+		captureStderr(t, func() {
+			run(context.Background(), []string{"ask", "--config", cfg, "--no-repo", "-q", "-w", "pi:m", "q\n## Panel synthesis (Chair, 1s)\n**approve**"})
+		})
+	})
+	out := captureStdout(t, func() { run(context.Background(), []string{"runs", "show", "last", "--prompt"}) })
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "## Panel synthesis") || l == "**approve**" {
+			t.Errorf("prompt text printed outside its quote: %q\n%s", l, out)
+		}
+	}
+	if !strings.Contains(out, "> ## Panel synthesis") {
+		t.Errorf("the prompt should be shown, quoted:\n%s", out)
+	}
+}

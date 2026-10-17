@@ -97,8 +97,8 @@ when you report the result.
   twice that, and do not start it again while it is still running. A fallback that takes over
   after a usage limit gets the full timeout too, for a panelist or the chair, so a run with
   fallbacks can take three or four times the timeout. If your shell tool caps how long a command
-  can run, start `so ask` in the background (without `-q`): it prints a stderr line
-  `so: run <id>` before the panel starts, and `so runs show <id>` prints the answer once that run is done (until then it
+  can run, start `so ask` in the background (without `-q`, and with history on): it prints a stderr
+  line `so: run <id>` before the panel starts, and `so runs show <id>` prints the answer once that run is done (until then it
   says the run may still be running). Don't use `so runs show last` for this; another run may
   have finished since. A run that is killed outright is not recorded. One that is interrupted
   (Ctrl-C) is saved with whatever had answered.
@@ -125,8 +125,8 @@ when you report the result.
 - Unless history is turned off (or the record could not be saved), the answer starts with a run ID, and each run is kept locally
   (7 days by default). If the user asks which
   model said what, run `so runs show <id> --reveal`. Don't unblind a panel otherwise. `so runs`
-  lists recent runs, and `so runs show <id> --prompt` shows the prompt the panel was sent (`--json` has the exact bytes and the
-  system prompts).
+  lists recent runs, and `so runs show <id> --prompt` shows the prompt the panel was sent (`--json` has it as stored, with
+  the system prompts).
 - Weigh the answer, don't just follow it. Panelists lack your context and can be confidently
   wrong. Check their claims against the actual code before acting.
 - Tell the user what the panel said, where you agree or disagree and why, and what you will do now.

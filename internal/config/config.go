@@ -161,9 +161,13 @@ func DefaultPath() string {
 	if x := os.Getenv("XDG_CONFIG_HOME"); filepath.IsAbs(x) {
 		return filepath.Join(x, "second-opinion", "config.toml")
 	}
+	// Without an absolute home there is no config location. A relative one
+	// would be read from the current directory, which may be an untrusted
+	// checkout that then picks the backend commands. "" means built-in
+	// defaults only.
 	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(".config", "second-opinion", "config.toml")
+	if err != nil || !filepath.IsAbs(home) {
+		return ""
 	}
 	return filepath.Join(home, ".config", "second-opinion", "config.toml")
 }
@@ -185,6 +189,9 @@ func Load(path string) (*Config, error) {
 	}
 	cfg.Customized = map[string]bool{}
 	cfg.Path = path
+	if path == "" {
+		return cfg, cfg.validate()
+	}
 	data, err := os.ReadFile(path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -293,6 +300,11 @@ func (c *Config) validate() error {
 		return fmt.Errorf("default_mode %q is not a defined mode", c.DefaultMode)
 	}
 	for name, bc := range c.Backends {
+		// A misspelled section would be ignored without a word, along with
+		// any env it sets (such as clearing an API key).
+		if name != "claude" && name != "codex" && name != "pi" {
+			return fmt.Errorf("unknown backend [backends.%s] (want claude, codex, or pi)", name)
+		}
 		// A relative path with a separator would resolve against the
 		// panelist's working directory, the reviewed repository with repo
 		// access, and run a binary from it.

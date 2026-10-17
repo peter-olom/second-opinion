@@ -287,14 +287,15 @@ func TestSeverityModesDefineTheirScale(t *testing.T) {
 
 func TestLoadRejectsBadValues(t *testing.T) {
 	for name, tc := range map[string]struct{ toml, want string }{
-		"profile effort":   {"[profiles.p]\npanelists = [{ backend = \"pi\", effort = \"hgih\" }]\n", `unknown effort "hgih"`},
-		"chair effort":     {"[profiles.p]\npanelists = [{ backend = \"pi\" }]\nchair = { backend = \"pi\", effort = \"hgih\" }\n", `profile "p" chair: unknown effort`},
-		"fallback effort":  {"[profiles.p]\npanelists = [{ backend = \"pi\", fallback = [{ backend = \"pi\", effort = \"hgih\" }] }]\n", `unknown effort "hgih"`},
-		"default chair":    {"default_chair = { backend = \"pi\", effort = \"hgih\" }\n", `default_chair: unknown effort`},
-		"history_days 0":   {"history_days = 0\n", "history_days = 0 is not allowed"},
-		"dash model":       {"[profiles.p]\npanelists = [{ backend = \"pi\", model = \"--tools\" }]\n", "can't start with -"},
-		"dash provider":    {"[profiles.p]\npanelists = [{ backend = \"pi\", provider = \"-x\" }]\n", "can't start with -"},
-		"relative command": {"[backends.pi]\ncommand = \"node_modules/.bin/pi\"\n", "use a command name on PATH or an absolute path"},
+		"profile effort":     {"[profiles.p]\npanelists = [{ backend = \"pi\", effort = \"hgih\" }]\n", `unknown effort "hgih"`},
+		"chair effort":       {"[profiles.p]\npanelists = [{ backend = \"pi\" }]\nchair = { backend = \"pi\", effort = \"hgih\" }\n", `profile "p" chair: unknown effort`},
+		"fallback effort":    {"[profiles.p]\npanelists = [{ backend = \"pi\", fallback = [{ backend = \"pi\", effort = \"hgih\" }] }]\n", `unknown effort "hgih"`},
+		"default chair":      {"default_chair = { backend = \"pi\", effort = \"hgih\" }\n", `default_chair: unknown effort`},
+		"history_days 0":     {"history_days = 0\n", "history_days = 0 is not allowed"},
+		"dash model":         {"[profiles.p]\npanelists = [{ backend = \"pi\", model = \"--tools\" }]\n", "can't start with -"},
+		"dash provider":      {"[profiles.p]\npanelists = [{ backend = \"pi\", provider = \"-x\" }]\n", "can't start with -"},
+		"misspelled backend": {"[backends.cluade]\nenv = { ANTHROPIC_API_KEY = \"\" }\n", "unknown backend [backends.cluade]"},
+		"relative command":   {"[backends.pi]\ncommand = \"node_modules/.bin/pi\"\n", "use a command name on PATH or an absolute path"},
 	} {
 		path := filepath.Join(t.TempDir(), "config.toml")
 		if err := os.WriteFile(path, []byte(tc.toml), 0o644); err != nil {
@@ -314,5 +315,28 @@ func TestLoadRejectsBadValues(t *testing.T) {
 func TestParseSpecRejectsFlagLikeModels(t *testing.T) {
 	if _, err := ParseSpec("pi:--tools"); err == nil {
 		t.Error("a model that starts with - should be rejected")
+	}
+}
+
+func TestNoConfigWithoutAbsoluteHome(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	os.MkdirAll(filepath.Join(dir, ".config", "second-opinion"), 0o755)
+	os.WriteFile(filepath.Join(dir, ".config", "second-opinion", "config.toml"), []byte("[backends.pi]\ncommand = \"/tmp/evil\"\n"), 0o644)
+	t.Setenv("SECOND_OPINION_CONFIG", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	for _, home := range []string{".", ""} {
+		t.Setenv("HOME", home)
+		t.Setenv("USERPROFILE", home)
+		if p := DefaultPath(); p != "" {
+			t.Errorf("HOME=%q: DefaultPath = %q, want none", home, p)
+		}
+		cfg, err := Load(DefaultPath())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Backends["pi"].Command != "" {
+			t.Errorf("HOME=%q: a config in the current directory was loaded", home)
+		}
 	}
 }

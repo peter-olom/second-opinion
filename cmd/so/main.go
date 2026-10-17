@@ -703,7 +703,9 @@ func cmdDoctor(ctx context.Context, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	if cfg.Exists {
+	if cfg.Path == "" {
+		fmt.Println("config: none (HOME is unset or not absolute; built-in defaults only)")
+	} else if cfg.Exists {
 		fmt.Println("config:", cfg.Path)
 	} else {
 		fmt.Printf("config: %s (not created yet)\n", cfg.Path)
@@ -1186,7 +1188,9 @@ func cmdRunsShow(args []string) int {
 		return 0
 	}
 	if *showPrompt {
-		fmt.Printf("# Prompt (%s, in %s)\n\n%s\n\n", rec.Time.Format(time.DateTime), strings.ReplaceAll(render.CleanText(rec.Dir), "\n", " "), render.CleanText(rec.Prompt))
+		// Quoted like the answers: attachments in the prompt are untrusted
+		// text and must not pass for so's own sections.
+		fmt.Printf("# Prompt (%s, in %s)\n\n%s\n", rec.Time.Format(time.DateTime), strings.ReplaceAll(render.CleanText(rec.Dir), "\n", " "), render.Quote(render.CleanText(rec.Prompt)))
 	}
 	if err := render.Markdown(os.Stdout, rec.Result); err != nil {
 		return fail(err)
@@ -1199,6 +1203,9 @@ func cmdInit(args []string) int {
 	force := fs.Bool("force", false, "overwrite an existing config")
 	if code, ok := parse(fs, args); !ok {
 		return code
+	}
+	if *cfgPath == "" {
+		return fail(errors.New("no config location: HOME is unset or not absolute; set it, or pass --config"))
 	}
 	if _, err := os.Stat(*cfgPath); err == nil && !*force {
 		return fail(fmt.Errorf("%s already exists (use --force to overwrite)", *cfgPath))

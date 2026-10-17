@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -40,8 +41,27 @@ func TestGitHelperDoesNotOutliveGit(t *testing.T) {
 		t.Fatalf("no helper PID recorded (%q)", data)
 	}
 	time.Sleep(200 * time.Millisecond)
-	if syscall.Kill(pid, 0) == nil {
+	if alive(pid) {
 		syscall.Kill(pid, syscall.SIGKILL)
 		t.Errorf("helper %d kept running after git exited", pid)
 	}
+}
+
+// alive reports whether pid is a running process. On Linux a killed orphan
+// can linger as a zombie until it is reaped, which Signal(0) can't tell from
+// a live one, so /proc decides there.
+func alive(pid int) bool {
+	if runtime.GOOS == "linux" {
+		stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+		if err != nil {
+			return false
+		}
+		s := string(stat)
+		if i := strings.LastIndexByte(s, ')'); i >= 0 && i+2 < len(s) {
+			return s[i+2] != 'Z' && s[i+2] != 'X'
+		}
+		return true
+	}
+	p, err := os.FindProcess(pid)
+	return err == nil && p.Signal(syscall.Signal(0)) == nil
 }

@@ -81,6 +81,9 @@ type Result struct {
 	Synthesis *Opinion  `json:"synthesis,omitempty"`
 	// ChairSkipped explains why a configured chair did not run.
 	ChairSkipped string `json:"chair_skipped,omitempty"`
+	// ChairClipped lists the panelists whose answers were cut short in the
+	// chair's prompt, so the caller knows the synthesis saw only part.
+	ChairClipped []string `json:"chair_clipped,omitempty"`
 }
 
 // Redact removes model identities, leaving only the anonymous labels.
@@ -189,6 +192,11 @@ func (r *Runner) Run(ctx context.Context, p Panel, prompt string) Result {
 	label := "chair " + p.Chair.Label()
 	if p.Anonymous {
 		label = "Chair"
+	}
+	for _, o := range ok {
+		if len(strings.TrimSpace(o.Output)) > maxChairResponse {
+			res.ChairClipped = append(res.ChairClipped, o.Label)
+		}
 	}
 	syn := r.Ask(ctx, *p.Chair, label, ChairSystem(p.ModeName, p.Mode, opts), ChairPrompt(prompt, ok), p.Workspace)
 	res.Synthesis = &syn

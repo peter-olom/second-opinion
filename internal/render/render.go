@@ -42,6 +42,9 @@ func Markdown(w io.Writer, r panel.Result) error {
 		b.WriteString("\n---\n\n")
 		if r.Synthesis != nil {
 			fmt.Fprintf(&b, "## Panel synthesis (%s, %s)\n\n", r.Synthesis.Label, status(*r.Synthesis))
+			if len(r.ChairClipped) > 0 {
+				fmt.Fprintf(&b, "_The chair saw only the first 256 KB of the answer from %s; the full answers are below._\n\n", strings.Join(r.ChairClipped, ", "))
+			}
 			writeBody(&b, *r.Synthesis)
 		} else {
 			fmt.Fprintf(&b, "## Panel synthesis\n\n_Skipped: %s._\n", r.ChairSkipped)
@@ -158,6 +161,10 @@ func writeBody(b *strings.Builder, o panel.Opinion) {
 		fmt.Fprintf(b, "\n%s\n", hint)
 	}
 }
+
+// Quote turns s into a Markdown blockquote, so nothing in it can pass for
+// a top-level section.
+func Quote(s string) string { return quote(s) }
 
 // quote turns s into a Markdown blockquote.
 func quote(s string) string {

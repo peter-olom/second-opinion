@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
+	"unicode"
 )
 
 // claude runs Claude Code in print mode with no MCP servers, settings, or session.
@@ -99,12 +99,21 @@ func claudeEffort(e string) string {
 // claude send ~/.aws/credentials or the like to the provider. A zero-width
 // space after each @ that starts a word stops the expansion (verified with
 // Claude Code 2.1); the note tells the model to read past it. To fail closed
-// on whatever counts as a word start (Unicode spaces, punctuation), every @
-// is defused unless it follows a character an email address could have.
-var mentionStart = regexp.MustCompile(`(^|[^\p{L}\p{N}._%+-])@`)
-
+// on whatever counts as a word start (Unicode spaces, punctuation, a diff's
+// "+"), every @ is defused unless the character before it in the original
+// text is a letter or digit, as in an email address.
 func defuseMentions(s string) string {
-	return mentionStart.ReplaceAllString(s, "${1}@\u200b")
+	var b strings.Builder
+	b.Grow(len(s))
+	prev := rune(-1)
+	for _, r := range s {
+		b.WriteRune(r)
+		if r == '@' && !unicode.IsLetter(prev) && !unicode.IsDigit(prev) {
+			b.WriteRune('\u200b')
+		}
+		prev = r
+	}
+	return b.String()
 }
 
 const mentionNote = "\n\n(so inserted an invisible zero-width space after each @ that starts a word in the request, to stop file mentions from being expanded. Read past it; it is not part of the text.)"

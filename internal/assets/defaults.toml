@@ -20,9 +20,9 @@ timeout = "15m"
 # the chair nor the caller knows which model said what. `so ask --reveal` appends a key afterwards.
 # anonymize = true
 
-# Every run is recorded privately in ~/.local/state/second-opinion/runs (including which model was
-# which panelist), so you can inspect it later with `so runs`. Runs older than history_days are
-# pruned automatically.
+# Every run is recorded privately in ~/.local/state/second-opinion/runs (or under $XDG_STATE_HOME),
+# including which model was which panelist, so you can inspect it later with `so runs`. Runs older
+# than history_days are pruned automatically.
 # history = true
 # history_days = 7
 
