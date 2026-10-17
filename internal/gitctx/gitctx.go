@@ -46,7 +46,7 @@ func Root(ctx context.Context, dir string) (string, error) {
 		return "", err
 	}
 	// Only git's line ending: a path may legitimately end in whitespace.
-	return strings.TrimSuffix(strings.TrimSuffix(out, "\n"), "\r"), nil
+	return strings.TrimSuffix(out, "\n"), nil // a CR could be part of the path
 }
 
 // Context is the rendered review context for a set of changes.
@@ -111,7 +111,14 @@ func Diff(ctx context.Context, dir, base, nonce string) (Context, error) {
 	// is an error rather than a partial answer.
 	// One listing gives every path and its status, so the attachments, the
 	// filter check, and the diff allowlist all agree on the same set.
-	statuses, err := gitPaths(ctx, root, "diff", "--name-status", "--no-renames", "-z", from, "--")
+	// Filter drivers from the git config (clean, process) would run on
+	// stat-dirty files while git compares the working tree, and every
+	// filtered file is dropped anyway, so they are all switched off.
+	noFilters, err := filtersOff(ctx, root)
+	if err != nil {
+		return Context{}, err
+	}
+	statuses, err := gitPaths(ctx, root, append(noFilters, "diff", "--name-status", "--no-renames", "-z", from, "--")...)
 	if err != nil {
 		return Context{}, err
 	}
@@ -143,18 +150,26 @@ func Diff(ctx context.Context, dir, base, nonce string) (Context, error) {
 	if err != nil {
 		return Context{}, err
 	}
-	// The check above reads the working tree's .gitattributes. If the change
-	// edits one, an uncommitted edit could drop a filter line, so the base's
-	// attributes count too.
-	if slices.ContainsFunc(all, func(p string) bool { return path.Base(p) == ".gitattributes" }) {
-		before, err := filteredPaths(ctx, root, all, from)
+	// The check above reads the working tree's .gitattributes, which an
+	// uncommitted edit could have stripped of a filter line. So the
+	// committed attributes count too: HEAD's and the base's for a branch
+	// review (a branch can add a rule that the working tree then drops), and
+	// the base's when the change edits a .gitattributes.
+	var sources []string
+	if base != "HEAD" {
+		sources = []string{"HEAD", from}
+	} else if slices.ContainsFunc(all, func(p string) bool { return path.Base(p) == ".gitattributes" }) {
+		sources = []string{from}
+	}
+	for _, src := range sources {
+		more, err := filteredPaths(ctx, root, all, src)
 		if err != nil {
 			if ctx.Err() != nil {
 				return Context{}, ctx.Err()
 			}
-			return Context{}, fmt.Errorf("--diff: this change edits .gitattributes, and its git attributes before the change could not be checked (git 2.40 or later is needed): %v", err)
+			return Context{}, fmt.Errorf("--diff: the committed git attributes could not be checked (git 2.40 or later is needed): %v", err)
 		}
-		for p := range before {
+		for p := range more {
 			filtered[p] = true
 		}
 	}
@@ -180,9 +195,9 @@ func Diff(ctx context.Context, dir, base, nonce string) (Context, error) {
 			kept.WriteString(line)
 		}
 		return true
-	}, "-c", "core.quotePath=false", "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false",
+	}, append(noFilters, "-c", "core.quotePath=false", "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false",
 		"diff", "--src-prefix=a/", "--dst-prefix=b/", "--submodule=short",
-		"--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", from, "--")
+		"--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", from, "--")...)
 	if err != nil {
 		return Context{}, err
 	}
@@ -617,4 +632,43 @@ func showPath(p string) string {
 		}
 	}
 	return p
+}
+
+// filtersOff returns git -c options that switch off every filter driver in
+// the git config for this repository: empty clean, smudge and process
+// commands are no-ops, and required = false keeps git from failing for want
+// of one.
+func filtersOff(ctx context.Context, root string) ([]string, error) {
+	out, _, err := git(ctx, root, 1<<20, "config", "--name-only", "--get-regexp", `^filter\.`)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 1 {
+			return nil, nil // no filter drivers configured
+		}
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var args []string
+	for _, key := range strings.Split(strings.TrimSpace(out), "\n") {
+		i := strings.LastIndexByte(key, '.')
+		if !strings.HasPrefix(key, "filter.") || i <= len("filter.") {
+			continue
+		}
+		name := key[len("filter."):i]
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		if strings.Contains(name, "=") {
+			return nil, fmt.Errorf("--diff: can't switch off the git filter driver %q (its name has an =)", name)
+		}
+		for _, k := range []string{"clean", "smudge", "process"} {
+			args = append(args, "-c", "filter."+name+"."+k+"=")
+		}
+		args = append(args, "-c", "filter."+name+".required=false")
+	}
+	return args, nil
 }

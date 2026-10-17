@@ -438,3 +438,42 @@ func TestUnresolvableHomeIsNamed(t *testing.T) {
 		t.Errorf("mode default: workspace %q, stderr %q; want none, with a note", ws, stderr)
 	}
 }
+
+func TestResolvePanel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	os.WriteFile(path, []byte(`
+default_mode = "review"
+default_chair = { backend = "claude", model = "opus" }
+
+[profiles.p]
+mode = "plan"
+panelists = [{ backend = "pi", model = "a" }, { backend = "pi", model = "b" }]
+`), 0o644)
+	cfg := loadConfigForTest(t, path)
+	for name, tc := range map[string]struct {
+		profile, mode, chair string
+		with                 []string
+		noChair              bool
+		wantChair, wantMode  string
+	}{
+		"with gets default_chair":    {with: []string{"pi:a", "pi:b"}, wantChair: "claude:opus", wantMode: "review"},
+		"no-chair sends nothing":     {with: []string{"pi:a", "pi:b"}, noChair: true, wantMode: "review"},
+		"single with has no chair":   {with: []string{"pi:a"}, wantMode: "review"},
+		"--chair overrides":          {with: []string{"pi:a", "pi:b"}, chair: "codex:x", wantChair: "codex:x", wantMode: "review"},
+		"profile mode beats default": {profile: "p", wantMode: "plan"},
+		"-m beats profile mode":      {profile: "p", mode: "debug", wantMode: "debug"},
+	} {
+		p, err := resolvePanel(cfg, tc.profile, tc.mode, tc.with, tc.chair, tc.noChair)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		got := ""
+		if p.Chair != nil {
+			got = p.Chair.Spec()
+		}
+		if got != tc.wantChair || p.ModeName != tc.wantMode {
+			t.Errorf("%s: chair %q mode %q, want %q %q", name, got, p.ModeName, tc.wantChair, tc.wantMode)
+		}
+	}
+}

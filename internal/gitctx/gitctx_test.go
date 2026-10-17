@@ -244,18 +244,23 @@ func TestDiffCancels(t *testing.T) {
 
 func TestDiffCancelsWhileGitRuns(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("shell filter")
+		t.Skip("uses a shell wrapper for git")
 	}
 	dir := newRepo(t)
-	write(t, dir, ".gitattributes", "*.slow filter=slow\n")
-	write(t, dir, "a.slow", "one\n")
-	run(t, dir, "add", ".")
-	run(t, dir, "commit", "-q", "-m", "slow")
-	started := filepath.Join(t.TempDir(), "started")
-	run(t, dir, "config", "filter.slow.clean", "sh -c 'touch "+started+"; sleep 10; cat'")
-	write(t, dir, "a.slow", "two\n")
+	write(t, dir, "a.go", "package a\n")
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A git that stalls in the diff itself, after signalling it got there.
+	bin := t.TempDir()
+	started := filepath.Join(bin, "started")
+	wrapper := "#!/bin/sh\ncase \"$*\" in *--src-prefix=a/*) touch " + started + "; sleep 10;; esac\nexec " + realGit + " \"$@\"\n"
+	os.WriteFile(filepath.Join(bin, "git"), []byte(wrapper), 0o755)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
 	ctx, cancel := context.WithCancel(context.Background())
-	// Cancel only once git is inside the slow filter.
+	defer cancel()
 	go func() {
 		for ctx.Err() == nil {
 			if _, err := os.Stat(started); err == nil {
@@ -265,9 +270,8 @@ func TestDiffCancelsWhileGitRuns(t *testing.T) {
 			time.Sleep(20 * time.Millisecond)
 		}
 	}()
-	defer cancel()
 	start := time.Now()
-	_, err := Diff(ctx, dir, "HEAD", "")
+	_, err = Diff(ctx, dir, "HEAD", "")
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("err = %v, want context.Canceled", err)
 	}
@@ -275,7 +279,34 @@ func TestDiffCancelsWhileGitRuns(t *testing.T) {
 		t.Errorf("took %s; cancellation should stop git", d)
 	}
 	if _, err := os.Stat(started); err != nil {
-		t.Error("the slow filter never ran, so this test checked nothing")
+		t.Error("the diff never ran, so this test checked nothing")
+	}
+}
+
+func TestFilterDriversNeverRun(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell filter")
+	}
+	dir := newRepo(t)
+	write(t, dir, ".gitattributes", "*.x filter=evil\n*.y filter=other\n")
+	write(t, dir, "a.x", "one\n")
+	write(t, dir, "b.y", "one\n")
+	run(t, dir, "add", ".")
+	run(t, dir, "commit", "-q", "-m", "x")
+	marker := filepath.Join(t.TempDir(), "ran")
+	// Configured after the commit, so only Diff could run them.
+	run(t, dir, "config", "filter.evil.clean", "sh -c 'touch "+marker+".clean; cat'")
+	run(t, dir, "config", "filter.evil.required", "true")
+	run(t, dir, "config", "filter.other.process", "sh -c 'touch "+marker+".process; exit 1'")
+	write(t, dir, "a.x", "two\n")
+	write(t, dir, "b.y", "two\n")
+	if _, err := Diff(context.Background(), dir, "HEAD", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range []string{marker + ".clean", marker + ".process"} {
+		if _, err := os.Stat(m); err == nil {
+			t.Errorf("a filter driver from the git config ran during --diff (%s)", filepath.Base(m))
+		}
 	}
 }
 
@@ -571,7 +602,13 @@ func TestDiffFilteredFileChangedMidCollection(t *testing.T) {
 		t.Errorf("the ordinary change should still be sent:\n%s", ctx.Text)
 	}
 	calls, _ := os.ReadFile(logFile)
-	if n := strings.Count(string(calls), "--name-status") + strings.Count(string(calls), "--name-only"); n != 1 {
+	n := 0
+	for _, l := range strings.Split(string(calls), "\n") {
+		if strings.Contains(l, " diff ") && (strings.Contains(l, "--name-status") || strings.Contains(l, "--name-only")) {
+			n++
+		}
+	}
+	if n != 1 {
 		t.Errorf("listed changed files %d times, want once:\n%s", n, calls)
 	}
 }
@@ -815,5 +852,39 @@ func TestOddFileNamesAreQuoted(t *testing.T) {
 	}
 	if !strings.Contains(ctx.Text, strconv.Quote("big.bin\nfake")+" (binary)") {
 		t.Errorf("the not-attached list should quote the name:\n%q", ctx.Text)
+	}
+}
+
+func TestBranchFilterRuleRemovedInWorkingTreeStillCounts(t *testing.T) {
+	for name, mainAttrs := range map[string]string{
+		"no attributes on main": "",
+		"same file as main":     "*.txt text\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			run(t, dir, "init", "-q", "-b", "main")
+			write(t, dir, "a.go", "package a\n")
+			if mainAttrs != "" {
+				write(t, dir, ".gitattributes", mainAttrs)
+			}
+			run(t, dir, "add", ".")
+			run(t, dir, "commit", "-q", "-m", "init")
+			run(t, dir, "checkout", "-q", "-b", "feature")
+			// The branch commits the rule and the (encrypted) file...
+			write(t, dir, ".gitattributes", mainAttrs+"vault.enc filter=crypt\n")
+			write(t, dir, "vault.enc", "ciphertext\n")
+			run(t, dir, "add", ".")
+			run(t, dir, "commit", "-q", "-m", "vault")
+			// ...and an uncommitted edit drops the rule; the copy is plaintext.
+			write(t, dir, ".gitattributes", mainAttrs)
+			write(t, dir, "vault.enc", "PLAINTEXT-VAULT\n")
+			ctx, err := Diff(context.Background(), dir, "main", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(ctx.Text, "PLAINTEXT-VAULT") {
+				t.Errorf("a file under HEAD's filter rule was sent:\n%s", ctx.Text)
+			}
+		})
 	}
 }

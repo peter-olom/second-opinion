@@ -125,7 +125,8 @@ when you report the result.
 - Unless history is turned off (or the record could not be saved), the answer starts with a run ID, and each run is kept locally
   (7 days by default). If the user asks which
   model said what, run `so runs show <id> --reveal`. Don't unblind a panel otherwise. `so runs`
-  lists recent runs, and `so runs show <id> --prompt` shows exactly what the panel was sent.
+  lists recent runs, and `so runs show <id> --prompt` shows the prompt the panel was sent (`--json` has the exact bytes and the
+  system prompts).
 - Weigh the answer, don't just follow it. Panelists lack your context and can be confidently
   wrong. Check their claims against the actual code before acting.
 - Tell the user what the panel said, where you agree or disagree and why, and what you will do now.

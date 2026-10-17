@@ -292,6 +292,14 @@ func (c *Config) validate() error {
 	if _, ok := c.Modes[c.DefaultMode]; !ok {
 		return fmt.Errorf("default_mode %q is not a defined mode", c.DefaultMode)
 	}
+	for name, bc := range c.Backends {
+		// A relative path with a separator would resolve against the
+		// panelist's working directory, the reviewed repository with repo
+		// access, and run a binary from it.
+		if bc.Command != "" && !filepath.IsAbs(bc.Command) && strings.ContainsAny(bc.Command, `/\`) {
+			return fmt.Errorf("backends.%s.command %q: use a command name on PATH or an absolute path", name, bc.Command)
+		}
+	}
 	check := func(where string, pl Panelist) error {
 		for _, x := range append([]Panelist{pl}, pl.Fallback...) {
 			// Model and provider become CLI arguments of their own; one that

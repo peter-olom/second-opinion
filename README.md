@@ -161,10 +161,12 @@ The caller always writes the prompt. There are two ways to give the panel more c
   and untracked file. `--diff` covers uncommitted changes. `--base main` covers everything since the
   branch left `main`, via the merge-base, so `main`'s later commits are excluded. Only regular files
   are attached: symlinks are never followed, and binary, very large, or special files are listed but
-  not attached. Git's textconv and external diff drivers are off, and files with a git `filter` in
-  `.gitattributes` (git-crypt, transcrypt, sops-style filters, LFS, …) are left out of both the diff
-  and the attachments, since their working copies may be decrypted (if the change edits
-  `.gitattributes`, a filter in either version counts). If there are too many changed
+  not attached. Git's textconv and external diff drivers are off, and so are the filter drivers in
+  your git config (they never run during `--diff`). Files with a git `filter` in `.gitattributes`
+  (git-crypt, transcrypt, sops-style filters, LFS, …) are left out of both the diff and the
+  attachments, since their working copies may be decrypted. A filter counts if the working tree's
+  attributes name it, or HEAD's and the base's for `--base` (if the change edits `.gitattributes`
+  with plain `--diff`, HEAD's too); checking committed attributes needs git 2.40 or later. If there are too many changed
   files to check this, `--diff` stops rather than send a partial check. Untracked files are attached
   unless git ignores them, so add anything other tools leave in your working tree to `.gitignore` or
   your global excludes. Limits: 1 MB of diff, 256 KB per file, 1.5 MB of files in total. This only
@@ -243,6 +245,16 @@ one-token budget), since Codex has no switch to turn them off. pi runs with `--o
 no startup network requests, such as package installs. If `ANTHROPIC_API_KEY` or `CODEX_API_KEY`/`OPENAI_API_KEY` is set,
 that CLI may bill the API account instead of your subscription; `so doctor` warns about it, and a
 backend's config `env` can clear it (`env = { ANTHROPIC_API_KEY = "" }`).
+
+Claude Code reads any file named in an `@path` mention in its prompt, in code blocks too, whatever
+its tools allow, and even outside the repository. In testing, an attached file mentioning
+`@/some/other/file` made claude send that file's contents. So `so` puts an invisible zero-width
+space after every `@` that isn't part of an email-like word in what it sends claude (panelists and
+chair), tells the model so, and without repo access also denies claude every read. Codex and pi
+don't expand mentions in a prompt on stdin.
+
+A `[backends.*] command` must be a name on `PATH` or an absolute path: a relative path would
+resolve inside the reviewed repository.
 
 These flags assume no overriding `args` in a `[backends.*]` section of your config: those are
 appended after `so`'s own flags, so they can undo the lockdown.

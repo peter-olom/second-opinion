@@ -116,8 +116,12 @@ func checkSpecs(specs ...string) error {
 		if spec == "" {
 			continue
 		}
-		if _, err := config.ParseSpec(spec); err != nil {
+		pl, err := config.ParseSpec(spec)
+		if err != nil {
 			return err
+		}
+		if !backend.Known(pl.Backend) {
+			return fmt.Errorf("unknown backend %q in %q (want one of %s)", pl.Backend, spec, strings.Join(backend.Names(), ", "))
 		}
 	}
 	return nil

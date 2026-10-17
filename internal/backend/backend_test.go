@@ -317,6 +317,10 @@ cat >/dev/null; echo ok > "$out"`)
 				t.Errorf("workspace %q: missing %q in:\n%s", ws, want, args)
 			}
 		}
+		// The answer file stays in the private scratch folder, never the repo.
+		if !strings.Contains(args, "--output-last-message\n"+filepath.Join(dir, "last-message.txt")+"\n") {
+			t.Errorf("workspace %q: --output-last-message should be in the scratch folder %s:\n%s", ws, dir, args)
+		}
 		hasShellOff := strings.Contains(args, "--disable\nshell_tool\n")
 		if (ws == "") != hasShellOff {
 			t.Errorf("workspace %q: shell_tool disabled = %v", ws, hasShellOff)
@@ -442,5 +446,54 @@ func TestCodexDiscoveryTimeoutIsATimeout(t *testing.T) {
 	_, err := codexFeatures(ctx, Options{Command: cli})
 	if !errors.Is(err, ErrTimeout) {
 		t.Errorf("err = %v, want it to wrap ErrTimeout", err)
+	}
+}
+
+func TestClaudeMentionsAreDefused(t *testing.T) {
+	for in, want := range map[string]string{
+		"@/etc/passwd":                   "@\u200b/etc/passwd",
+		"see @~/.aws/credentials please": "see @\u200b~/.aws/credentials please",
+		"```\n@x\n```":                   "```\n@\u200bx\n```",
+		"\u00a0@x (@y) \"@z\"":           "\u00a0@\u200bx (@\u200by) \"@\u200bz\"",
+		"mail me at a.b@example.com":     "mail me at a.b@example.com",
+		"@Override\n\t@Test":             "@\u200bOverride\n\t@\u200bTest",
+	} {
+		if got := defuseMentions(in); got != want {
+			t.Errorf("defuseMentions(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestClaudeGetsDefusedPromptAndReadDeny(t *testing.T) {
+	dir := t.TempDir()
+	argsFile, stdinFile := filepath.Join(dir, "args"), filepath.Join(dir, "stdin")
+	cli := script(t, "printf '%s\\n' \"$@\" > "+argsFile+"\ncat > "+stdinFile+"\necho '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\"}'\n")
+	for _, workspace := range []string{"", t.TempDir()} {
+		if _, err := (claude{Options{Command: cli}}).Run(context.Background(), Request{System: "s", Prompt: "read @/etc/passwd", Dir: t.TempDir(), Workspace: workspace}); err != nil {
+			t.Fatal(err)
+		}
+		args, _ := os.ReadFile(argsFile)
+		stdin, _ := os.ReadFile(stdinFile)
+		if !strings.Contains(string(stdin), "@\u200b/etc/passwd") {
+			t.Errorf("workspace %q: claude got an undefused mention: %q", workspace, stdin)
+		}
+		deny := strings.Contains(string(args), `{"permissions":{"deny":["Read"]}}`)
+		if deny != (workspace == "") {
+			t.Errorf("workspace %q: Read deny = %v, want it only without repo access", workspace, deny)
+		}
+	}
+}
+
+func TestConfigArgsComeAfterSoFlags(t *testing.T) {
+	// README: args in a [backends.*] section are appended after so's flags.
+	argsFile := filepath.Join(t.TempDir(), "args")
+	cli := script(t, "printf '%s\\n' \"$@\" > "+argsFile+"\ncat >/dev/null\necho ok\n")
+	if _, err := (pi{Options{Command: cli, Args: []string{"--user-flag"}}}).Run(context.Background(), Request{System: "s", Prompt: "q", Dir: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(argsFile)
+	args := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if args[len(args)-1] != "--user-flag" || slices.Index(args, "--no-tools") > slices.Index(args, "--user-flag") {
+		t.Errorf("config args should come last: %q", args)
 	}
 }

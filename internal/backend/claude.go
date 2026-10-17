@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -27,7 +28,12 @@ func (c claude) Run(ctx context.Context, req Request) (string, error) {
 		"--setting-sources", "",
 		"--no-session-persistence",
 		"--disable-slash-commands",
-		"--system-prompt", req.System,
+		"--system-prompt", req.System + mentionNote,
+	}
+	if req.Workspace == "" {
+		// Defense in depth for the mention expansion below: with no tools,
+		// nothing may be read at all.
+		args = append(args, "--settings", `{"permissions":{"deny":["Read"]}}`)
 	}
 	if req.Model != "" {
 		args = append(args, "--model", req.Model)
@@ -36,7 +42,7 @@ func (c claude) Run(ctx context.Context, req Request) (string, error) {
 		args = append(args, "--effort", e)
 	}
 
-	out, runErr := run(ctx, "claude", c.opts, req.cwd(), args, req.Prompt)
+	out, runErr := run(ctx, "claude", c.opts, req.cwd(), args, defuseMentions(req.Prompt))
 	var res struct {
 		Result  string `json:"result"`
 		IsError bool   `json:"is_error"`
@@ -85,3 +91,20 @@ func claudeEffort(e string) string {
 	}
 	return e
 }
+
+// Claude Code expands an @path mention anywhere in a print-mode prompt (in
+// code fences and tags too) by reading that file into the prompt, whatever
+// --tools says and, with repo access, even outside the repository. A diff,
+// an attached file, or a panelist's answer to the chair could therefore make
+// claude send ~/.aws/credentials or the like to the provider. A zero-width
+// space after each @ that starts a word stops the expansion (verified with
+// Claude Code 2.1); the note tells the model to read past it. To fail closed
+// on whatever counts as a word start (Unicode spaces, punctuation), every @
+// is defused unless it follows a character an email address could have.
+var mentionStart = regexp.MustCompile(`(^|[^\p{L}\p{N}._%+-])@`)
+
+func defuseMentions(s string) string {
+	return mentionStart.ReplaceAllString(s, "${1}@\u200b")
+}
+
+const mentionNote = "\n\n(so inserted an invisible zero-width space after each @ that starts a word in the request, to stop file mentions from being expanded. Read past it; it is not part of the text.)"

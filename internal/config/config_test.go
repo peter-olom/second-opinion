@@ -52,7 +52,7 @@ func TestLoadDefaults(t *testing.T) {
 	if _, _, err := cfg.Profile(""); !errors.Is(err, ErrNoProfiles) {
 		t.Errorf("Profile(\"\") err = %v, want ErrNoProfiles", err)
 	}
-	for _, mode := range []string{"general", "review", "plan", "debug"} {
+	for _, mode := range []string{"general", "review", "plan", "debug", "audit"} {
 		if _, ok := cfg.Modes[mode]; !ok {
 			t.Errorf("built-in mode %q missing", mode)
 		}
@@ -287,13 +287,14 @@ func TestSeverityModesDefineTheirScale(t *testing.T) {
 
 func TestLoadRejectsBadValues(t *testing.T) {
 	for name, tc := range map[string]struct{ toml, want string }{
-		"profile effort":  {"[profiles.p]\npanelists = [{ backend = \"pi\", effort = \"hgih\" }]\n", `unknown effort "hgih"`},
-		"chair effort":    {"[profiles.p]\npanelists = [{ backend = \"pi\" }]\nchair = { backend = \"pi\", effort = \"hgih\" }\n", `profile "p" chair: unknown effort`},
-		"fallback effort": {"[profiles.p]\npanelists = [{ backend = \"pi\", fallback = [{ backend = \"pi\", effort = \"hgih\" }] }]\n", `unknown effort "hgih"`},
-		"default chair":   {"default_chair = { backend = \"pi\", effort = \"hgih\" }\n", `default_chair: unknown effort`},
-		"history_days 0":  {"history_days = 0\n", "history_days = 0 is not allowed"},
-		"dash model":      {"[profiles.p]\npanelists = [{ backend = \"pi\", model = \"--tools\" }]\n", "can't start with -"},
-		"dash provider":   {"[profiles.p]\npanelists = [{ backend = \"pi\", provider = \"-x\" }]\n", "can't start with -"},
+		"profile effort":   {"[profiles.p]\npanelists = [{ backend = \"pi\", effort = \"hgih\" }]\n", `unknown effort "hgih"`},
+		"chair effort":     {"[profiles.p]\npanelists = [{ backend = \"pi\" }]\nchair = { backend = \"pi\", effort = \"hgih\" }\n", `profile "p" chair: unknown effort`},
+		"fallback effort":  {"[profiles.p]\npanelists = [{ backend = \"pi\", fallback = [{ backend = \"pi\", effort = \"hgih\" }] }]\n", `unknown effort "hgih"`},
+		"default chair":    {"default_chair = { backend = \"pi\", effort = \"hgih\" }\n", `default_chair: unknown effort`},
+		"history_days 0":   {"history_days = 0\n", "history_days = 0 is not allowed"},
+		"dash model":       {"[profiles.p]\npanelists = [{ backend = \"pi\", model = \"--tools\" }]\n", "can't start with -"},
+		"dash provider":    {"[profiles.p]\npanelists = [{ backend = \"pi\", provider = \"-x\" }]\n", "can't start with -"},
+		"relative command": {"[backends.pi]\ncommand = \"node_modules/.bin/pi\"\n", "use a command name on PATH or an absolute path"},
 	} {
 		path := filepath.Join(t.TempDir(), "config.toml")
 		if err := os.WriteFile(path, []byte(tc.toml), 0o644); err != nil {
