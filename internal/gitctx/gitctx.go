@@ -126,25 +126,45 @@ func contains(root, dir string) bool { return Inside(root, dir) }
 // parent plus the names below it, so a deleted file still covers what it
 // was (its deletion in a diff, say).
 func Inside(root, path string) bool {
-	if root == "" || path == "" {
-		return false
+	pl, ok := place(root)
+	return ok && pl.holds(path)
+}
+
+// placed is a root resolved once, for many Inside checks: its nearest
+// existing part, and the names below it that don't exist.
+type placed struct {
+	base os.FileInfo
+	rest []string
+	fold bool
+}
+
+func place(root string) (placed, bool) {
+	if root == "" {
+		return placed{}, false
 	}
 	base, rest := existingPrefix(physical(root))
 	bi, err := os.Stat(base)
 	if err != nil {
+		return placed{}, false
+	}
+	return placed{bi, rest, caseInsensitive(base)}, true
+}
+
+func (pl placed) holds(path string) bool {
+	if path == "" {
 		return false
 	}
-	fold := caseInsensitive(base)
-	for cur := physical(path); ; {
-		if ci, err := os.Stat(cur); err == nil && os.SameFile(ci, bi) {
+	full := physical(path)
+	for cur := full; ; {
+		if ci, err := os.Stat(cur); err == nil && os.SameFile(ci, pl.base) {
 			// cur is root's existing part; what follows in path must begin
 			// with root's missing names.
-			below := strings.Split(strings.TrimPrefix(strings.TrimPrefix(physical(path), cur), string(filepath.Separator)), string(filepath.Separator))
-			if len(rest) > len(below) {
+			below := strings.Split(strings.TrimPrefix(strings.TrimPrefix(full, cur), string(filepath.Separator)), string(filepath.Separator))
+			if len(pl.rest) > len(below) {
 				return false
 			}
-			for i, name := range rest {
-				if below[i] != name && !(fold && strings.EqualFold(below[i], name)) {
+			for i, name := range pl.rest {
+				if below[i] != name && !(pl.fold && strings.EqualFold(below[i], name)) {
 					return false
 				}
 			}
@@ -375,13 +395,17 @@ func Diff(ctx context.Context, dir, base, nonce string, exclude ...Exclude) (Con
 	// symlinks, "..") lets them through.
 	excluded := map[string]string{}
 	for _, ex := range exclude {
-		if ex.Path == "" {
+		// Even when it no longer exists: its deletion would show its old
+		// contents. Resolved once, then checked against every path.
+		pl, ok := place(ex.Path)
+		if !ok {
 			continue
 		}
-		// Even when it no longer exists: its deletion would show its old
-		// contents.
-		for _, p := range all {
-			if Inside(physical(ex.Path), filepath.Join(root, filepath.FromSlash(p))) {
+		for n, p := range all {
+			if n%1000 == 0 && ctx.Err() != nil {
+				return Context{}, ctx.Err()
+			}
+			if pl.holds(filepath.Join(root, filepath.FromSlash(p))) {
 				excluded[p], drop[p] = ex.Reason, true
 			}
 		}

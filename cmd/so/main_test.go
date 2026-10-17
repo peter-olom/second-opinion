@@ -16,6 +16,7 @@ import (
 
 	"github.com/peter-olom/second-opinion/internal/backend"
 	"github.com/peter-olom/second-opinion/internal/config"
+	"github.com/peter-olom/second-opinion/internal/gitctx"
 	"github.com/peter-olom/second-opinion/internal/history"
 	"github.com/peter-olom/second-opinion/internal/panel"
 )
@@ -406,15 +407,28 @@ func TestInterruptedRunIsRecorded(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "fake-pi")
-	script := "#!/bin/sh\nwhile [ $# -gt 0 ]; do [ \"$1\" = --model ] && model=$2; shift; done\ncat >/dev/null\n[ \"$model\" = slow ] && sleep 30\necho \"answer from $model\"\n"
+	answered := filepath.Join(dir, "fast-answered")
+	script := "#!/bin/sh\nwhile [ $# -gt 0 ]; do [ \"$1\" = --model ] && model=$2; shift; done\ncat >/dev/null\n[ \"$model\" = slow ] && sleep 30\necho \"answer from $model\"\n[ \"$model\" = fast ] && touch " + answered + "\n"
 	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	cfg := filepath.Join(dir, "config.toml")
 	os.WriteFile(cfg, []byte(stubOtherBackends+"[backends.pi]\ncommand = \""+fake+"\"\n"), 0o644)
 
+	// Interrupt once the fast panelist has answered (and so has had time
+	// to be collected), not after a fixed delay.
 	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(1500*time.Millisecond, cancel)
+	defer cancel()
+	go func() {
+		for ctx.Err() == nil {
+			if _, err := os.Stat(answered); err == nil {
+				time.Sleep(300 * time.Millisecond)
+				cancel()
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
 	var code int
 	captureStdout(t, func() {
 		captureStderr(t, func() {
@@ -697,7 +711,7 @@ printf '{"type":"result","subtype":"success","result":"saw %s"}\n' "$content"
 	out := captureStdout(t, func() {
 		code = run(context.Background(), []string{"doctor", "--canary", "--config", cfgPath, "-w", "claude:x"})
 	})
-	for _, check := range []string{"(tools)", "(tools, repo access)", "(mention)", "(mention, repo access)", "(denied paths, repo access)"} {
+	for _, check := range []string{"(tools)", "(tools, repo access)", "(mention)", "(mention, repo access)", "(denied paths, repo access)", "(absolute deny, repo access)"} {
 		if !strings.Contains(out, "✓ claude:x "+check) {
 			t.Errorf("missing a passing %s check:\n%s", check, out)
 		}
@@ -1098,7 +1112,81 @@ func TestDiffLeavesOutABackendHomeInTheRepo(t *testing.T) {
 		})
 	})
 	prompt, _ := os.ReadFile(got)
-	if strings.Contains(string(prompt), "AUTH-SENTINEL") || !strings.Contains(string(prompt), "ordinary") {
-		t.Errorf("codex's home went out with the diff, or the ordinary change didn't:\n%s", prompt)
+	if strings.Contains(string(prompt), "AUTH-SENTINEL") || !strings.Contains(string(prompt), "ordinary") ||
+		!strings.Contains(string(prompt), "(codex's home (CODEX_HOME), with its credentials; not attached)") {
+		t.Errorf("codex's home went out with the diff, or the ordinary change or the omission note didn't:\n%s", prompt)
+	}
+}
+
+func TestBackendHomesHoweverGiven(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	work := t.TempDir()
+	t.Chdir(work)
+	t.Setenv("CODEX_HOME", ".codex-auth")        // relative to where so runs
+	t.Setenv("PI_CODING_AGENT_DIR", "~/pi-auth") // the CLI expands ~
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	cfg := &config.Config{Backends: map[string]config.Backend{}}
+	got := map[string]string{}
+	for _, ex := range privatePaths(cfg) {
+		got[ex.Reason] = ex.Path
+	}
+	if p := got["codex's home (CODEX_HOME), with its credentials"]; !gitctx.Inside(work, p) || filepath.Base(p) != ".codex-auth" {
+		t.Errorf("relative CODEX_HOME -> %q, want it under %s", p, work)
+	}
+	if p := got["pi's home (PI_CODING_AGENT_DIR), with its credentials"]; p != filepath.Join(home, "pi-auth") {
+		t.Errorf("~ PI_CODING_AGENT_DIR -> %q, want %s", p, filepath.Join(home, "pi-auth"))
+	}
+}
+
+func TestHomeGuardsIgnoreLetterCase(t *testing.T) {
+	parent := t.TempDir()
+	if r, err := filepath.EvalSymlinks(parent); err == nil {
+		parent = r
+	}
+	home := filepath.Join(parent, "Home")
+	os.MkdirAll(filepath.Join(home, ".config", "app"), 0o755)
+	alt := filepath.Join(parent, "hOME")
+	a, _ := os.Stat(home)
+	b, err := os.Stat(alt)
+	if err != nil || !os.SameFile(a, b) {
+		t.Skip("case-sensitive filesystem")
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if !containsHome(alt) {
+		t.Error("containsHome should see home through another spelling")
+	}
+	if !inHomeDotDir(filepath.Join(alt, ".config", "app")) {
+		t.Error("inHomeDotDir should see the dot-folder through another spelling")
+	}
+	t.Chdir(alt)
+	if ws, err := resolveWorkspace(context.Background(), true, false, nil); err == nil {
+		t.Errorf("--repo from home, spelled %s, = %q; want a refusal", alt, ws)
+	}
+}
+
+func TestDoctorProfileAloneIsChecked(t *testing.T) {
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "pi")
+	os.WriteFile(fake, []byte("#!/bin/sh\necho 1.0\n"), 0o755)
+	cfg := filepath.Join(dir, "config.toml")
+	os.WriteFile(cfg, []byte(stubOtherBackends+"[backends.pi]\ncommand = \""+fake+"\"\n[profiles.real]\npanelists = [{ backend = \"pi\" }]\n"), 0o644)
+	var code int
+	stderr := captureStderr(t, func() {
+		captureStdout(t, func() {
+			code = run(context.Background(), []string{"doctor", "--config", cfg, "-p", "no-such-profile"})
+		})
+	})
+	if code == 0 || !strings.Contains(stderr, "no-such-profile") {
+		t.Errorf("doctor -p with an unknown profile: exit %d, stderr %q; want it reported", code, stderr)
+	}
+}
+
+func TestOtherBackendsCountsFallbacks(t *testing.T) {
+	p := panel.Panel{Panelists: []config.Panelist{{Backend: "claude", Fallback: []config.Panelist{{Backend: "pi"}}}}, Chair: &config.Panelist{Backend: "claude"}}
+	if got := otherBackends(p); got != "pi" {
+		t.Errorf("otherBackends = %q, want pi (from a fallback)", got)
 	}
 }

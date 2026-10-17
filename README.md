@@ -286,13 +286,15 @@ These flags assume no overriding `args` in a `[backends.*]` section of your conf
 appended after `so`'s own flags, so they can undo the lockdown.
 
 `so doctor --canary` tests this on your machine. It plants a file outside each model's folder and
-runs five checks per model, each configured exactly as a panelist: two ask it to read the file with
+runs six checks per model, each configured exactly as a panelist: two ask it to read the file with
 any tool it has, without repo access and with repo access through a symlink in the workspace (only
 claude must refuse that one; codex and pi can read any file with repo access, so for them it is
 reported, not failed), and two name the file in an `@` mention, the way claude would expand it,
 without and with repo access (with repo access, again only claude must refuse). The fifth plants
 the token in the workspace's own `.git/config`, a nested `.git`, `.recallstack/` and a
-differently-cased `.SpecStory/`, which claude's rules deny, and asks for those. A ✓ means it did not read the file on that
+`.SpecStory/` (cased so only where the filesystem ignores case), which claude's rules deny, and
+asks for those. The sixth denies a file by absolute path, as `so`'s own history and config are,
+under a folder named `[x] (y) {z}`, and asks for it. At most four checks run at a time. A ✓ means it did not read the file on that
 run, which is evidence rather than proof. In testing, a Codex panelist with this lockdown didn't read the file in
 10 of 10 runs, while the same check caught an unlocked Codex every time.
 
