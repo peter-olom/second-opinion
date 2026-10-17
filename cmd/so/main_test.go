@@ -795,3 +795,18 @@ func TestHistoryInsideTheSharedRepoIsWarned(t *testing.T) {
 		t.Errorf("stderr = %q, want the history warning", stderr)
 	}
 }
+
+func TestHarnessWarningInAPlainFolder(t *testing.T) {
+	unsetEnv(t, backend.EnvGuard)
+	dir := t.TempDir() // --repo outside any git repository
+	os.MkdirAll(filepath.Join(dir, "sub", ".recallstack"), 0o755)
+	t.Chdir(dir)
+	stderr := captureStderr(t, func() {
+		captureStdout(t, func() {
+			run(context.Background(), []string{"ask", "--config", fakePiConfig(t), "--repo", "-w", "pi:x", "q"})
+		})
+	})
+	if !strings.Contains(stderr, "sub/.recallstack holds agent-harness state") || strings.Contains(stderr, "could not check") {
+		t.Errorf("stderr = %q, want the warning naming sub/.recallstack and no scan error", stderr)
+	}
+}

@@ -7,9 +7,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/peter-olom/second-opinion/internal/harness"
 )
 
 func script(t *testing.T, body string) string {
@@ -493,9 +496,14 @@ func TestClaudeGetsDefusedPromptAndReadDeny(t *testing.T) {
 		if deny != (workspace == "") {
 			t.Errorf("workspace %q: Read deny = %v, want it only without repo access", workspace, deny)
 		}
-		harness := strings.Contains(string(args), `"Read(./.recallstack/**)"`) && strings.Contains(string(args), `"Read(**/.recallstack/**)"`) && strings.Contains(string(args), `"Read(./.git/**)"`)
-		if harness != (workspace != "") {
-			t.Errorf("workspace %q: harness-state and .git deny = %v, want them with repo access", workspace, harness)
+		harnessDeny := strings.Contains(string(args), `"Read(./.git/**)"`)
+		for _, n := range harness.Names {
+			for _, rule := range []string{"Read(./" + n + ")", "Read(./" + n + "/**)", "Read(**/" + n + ")", "Read(**/" + n + "/**)"} {
+				harnessDeny = harnessDeny && strings.Contains(string(args), strconv.Quote(rule))
+			}
+		}
+		if harnessDeny != (workspace != "") {
+			t.Errorf("workspace %q: harness-state and .git deny = %v, want every rule with repo access", workspace, harnessDeny)
 		}
 	}
 }

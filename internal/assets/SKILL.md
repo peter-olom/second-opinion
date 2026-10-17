@@ -213,7 +213,9 @@ chair = { backend = "claude", model = "opus", effort = "high" }
    and keep what the user already has.
 3. Run `so profiles` to validate the config, then `so doctor --ping` to check every configured
    model end to end, and `so doctor --canary` to check that no model reads a file outside its
-   folder, through its tools or through an `@` mention (evidence from one run, not proof).
+   folder, through its tools or through an `@` mention (evidence from one run, not proof). With
+   repo access only claude must refuse; codex and pi can read any file then, which the canary
+   reports rather than fails, so don't tell the user every model is confined.
 4. Tell the user what you set up, and that they can change it later by asking you or by editing the
    config file.
 

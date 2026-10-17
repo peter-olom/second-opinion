@@ -267,17 +267,15 @@ func cmdAsk(ctx context.Context, args []string) int {
 		fmt.Fprintln(os.Stderr, "so: the run history is inside the repository shared with the panel, so panelists can read earlier runs, including which model was which; move XDG_STATE_HOME or use --no-repo")
 	}
 	if p.Workspace != "" {
-		// Anywhere in the repository, not only at its root: a harness run
-		// in a subfolder keeps its state there.
-		found, err := gitctx.HarnessPaths(ctx, p.Workspace, 5)
-		if err != nil && ctx.Err() == nil {
-			fmt.Fprintf(os.Stderr, "so: could not check the whole repository for agent-harness state (%v); checked its root only\n", err)
-			found = nil
-			for _, name := range harness.Names {
-				if _, err := os.Lstat(filepath.Join(p.Workspace, name)); err == nil {
-					found = append(found, name)
-				}
-			}
+		// Anywhere in the workspace, not only at its root, ignored folders,
+		// submodules and nested repositories included: a harness run in a
+		// subfolder keeps its state there.
+		found, complete, err := harness.Find(p.Workspace, 5, 200000)
+		switch {
+		case err != nil:
+			fmt.Fprintf(os.Stderr, "so: could not check the workspace for agent-harness state: %v\n", err)
+		case !complete:
+			fmt.Fprintln(os.Stderr, "so: checked only part of the workspace for agent-harness state (it is very large)")
 		}
 		for _, name := range found {
 			fmt.Fprintf(os.Stderr, "so: %s holds agent-harness state; claude panelists are denied it, but codex and pi panelists with repo access can read it (use --no-repo to prevent that)\n", render.Line(name))

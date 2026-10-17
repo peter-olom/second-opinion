@@ -264,14 +264,15 @@ backend's config `env` can clear it (`env = { ANTHROPIC_API_KEY = "" }`). pi has
 and environment select.
 
 Agent harnesses sometimes keep session state in the repository (`.recallstack/`, `.specstory/`,
-aider's history files; matched at any depth and in any letter case). `--diff` never attaches them.
+aider's history files; matched at any depth and in any letter case, inside ignored folders,
+submodules and nested repositories too). `--diff` never attaches them.
 With repo access, claude panelists are denied those paths (Read rules,
 which cover Grep and Glob too), and `so` warns that codex and pi panelists can still read them.
 
 Claude Code reads any file named in an `@path` mention in its prompt, in code blocks too, whatever
 its tools allow, and even outside the repository. In testing, an attached file mentioning
 `@/some/other/file` made claude send that file's contents. So `so` puts an invisible zero-width
-space before every `@` that isn't part of an email-like word (before, not after: after it, the
+space before every `@` that doesn't follow an ASCII letter or digit (as in an email address) (before, not after: after it, the
 mention would name a relative path that a repository could provide, which was expanded in testing) in what it sends claude (panelists and
 chair), tells the model so, and without repo access also denies claude every read. Codex and pi
 don't expand mentions in a prompt on stdin, and claude didn't expand one in its system prompt
@@ -429,7 +430,7 @@ make snapshot   # build all release archives into dist/ without publishing (need
 ```
 
 CI runs `make test` (with the race detector) and `make build` on Linux and macOS for every push
-and pull request. A Windows job runs `go vet`, builds `so`, and runs the Windows-specific path and
+to main and every pull request. A Windows job runs `go vet`, builds `so`, and runs the Windows-specific path and
 uninstall tests. A snapshot build keeps the release config working. To release, push a tag:
 
 ```bash

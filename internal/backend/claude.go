@@ -147,4 +147,4 @@ func asciiAlnum(r rune) bool {
 // restoreMentions undoes defuseMentions in what claude echoes back.
 func restoreMentions(s string) string { return strings.ReplaceAll(s, "\u200b@", "@") }
 
-const mentionNote = "\n\n(so inserted an invisible zero-width space before each @ in the request that doesn't follow a letter or digit, to stop file mentions from being expanded. Read past it as if it weren't there, and don't mention it.)"
+const mentionNote = "\n\n(so inserted an invisible zero-width space before each @ in the request that doesn't follow an ASCII letter or digit, to stop file mentions from being expanded. Read past it as if it weren't there, and don't mention it.)"

@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -491,9 +490,6 @@ func TestDiffFailsClosedOnTooManyPaths(t *testing.T) {
 	}
 	if _, err := Diff(context.Background(), dir, "HEAD", ""); err == nil || !strings.Contains(err.Error(), "too many untracked files") {
 		t.Errorf("err = %v, want a refusal naming untracked files, rather than a partial check", err)
-	}
-	if _, err := HarnessPaths(context.Background(), dir, 5); err == nil {
-		t.Error("HarnessPaths should report that it couldn't list everything")
 	}
 }
 
@@ -1074,20 +1070,6 @@ func TestDiffLeavesOutHarnessState(t *testing.T) {
 		if !strings.Contains(ctx.Text, want) {
 			t.Errorf("missing %q:\n%s", want, ctx.Text)
 		}
-	}
-}
-
-func TestHarnessPathsFindsNestedState(t *testing.T) {
-	dir := newRepo(t)
-	os.MkdirAll(filepath.Join(dir, "packages", "app", ".recallstack"), 0o755)
-	write(t, dir, "packages/app/.recallstack/s.json", "x")
-	write(t, dir, ".gitignore", ".recallstack/\n") // ignored, and still found
-	got, err := HarnessPaths(context.Background(), dir, 5)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Contains(got, "packages/app/.recallstack") {
-		t.Errorf("HarnessPaths = %q, want the nested .recallstack", got)
 	}
 }
 
