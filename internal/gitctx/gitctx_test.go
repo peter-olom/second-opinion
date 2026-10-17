@@ -59,8 +59,8 @@ func TestDiffUncommitted(t *testing.T) {
 	for _, want := range []string{
 		`<git-diff base="HEAD">`,
 		"+func A() int { return 2 }",
-		`<file path="a.go" status="changed">`,
-		`<file path="new.go" status="new, untracked">`,
+		"<file path=\"a.go\" status=\"changed\">\npackage a\n\nfunc A() int { return 2 }\n</file>",
+		"<file path=\"new.go\" status=\"new, untracked\">\npackage a\n\nfunc New() {}\n</file>",
 		"blob.bin (binary)",
 	} {
 		if !strings.Contains(ctx.Text, want) {
@@ -288,9 +288,10 @@ func TestFilterDriversNeverRun(t *testing.T) {
 		t.Skip("shell filter")
 	}
 	dir := newRepo(t)
-	write(t, dir, ".gitattributes", "*.x filter=evil\n*.y filter=other\n")
+	write(t, dir, ".gitattributes", "*.x filter=evil\n*.y filter=other\n*.z filter=\n")
 	write(t, dir, "a.x", "one\n")
 	write(t, dir, "b.y", "one\n")
+	write(t, dir, "c.z", "one\n")
 	run(t, dir, "add", ".")
 	run(t, dir, "commit", "-q", "-m", "x")
 	marker := filepath.Join(t.TempDir(), "ran")
@@ -298,12 +299,15 @@ func TestFilterDriversNeverRun(t *testing.T) {
 	run(t, dir, "config", "filter.evil.clean", "sh -c 'touch "+marker+".clean; cat'")
 	run(t, dir, "config", "filter.evil.required", "true")
 	run(t, dir, "config", "filter.other.process", "sh -c 'touch "+marker+".process; exit 1'")
+	// A driver with an empty name, which "*.z filter=" selects.
+	run(t, dir, "config", "filter..clean", "sh -c 'touch "+marker+".empty; cat'")
 	write(t, dir, "a.x", "two\n")
 	write(t, dir, "b.y", "two\n")
+	write(t, dir, "c.z", "two\n")
 	if _, err := Diff(context.Background(), dir, "HEAD", ""); err != nil {
 		t.Fatal(err)
 	}
-	for _, m := range []string{marker + ".clean", marker + ".process"} {
+	for _, m := range []string{marker + ".clean", marker + ".process", marker + ".empty"} {
 		if _, err := os.Stat(m); err == nil {
 			t.Errorf("a filter driver from the git config ran during --diff (%s)", filepath.Base(m))
 		}

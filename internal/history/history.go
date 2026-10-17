@@ -84,11 +84,17 @@ func Save(dir string, r Record, maxAge time.Duration) error {
 	if err != nil {
 		return err
 	}
-	// O_EXCL never follows a symlink and never overwrites an existing record.
-	f, err := os.OpenFile(filepath.Join(dir, r.ID+".json"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	// The record is written under a temporary name and linked into place
+	// once complete, so a reader polling for the ID never sees a partial
+	// record, and a failed write leaves none. O_EXCL never follows a symlink,
+	// and a link never overwrites an existing record.
+	final := filepath.Join(dir, r.ID+".json")
+	tmp := filepath.Join(dir, ".tmp-"+r.ID+".json")
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
+	defer os.Remove(tmp)
 	if _, err := f.Write(data); err != nil {
 		f.Close()
 		return err
@@ -96,8 +102,28 @@ func Save(dir string, r Record, maxAge time.Duration) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
+	if err := os.Link(tmp, final); err != nil {
+		return err
+	}
 	Prune(dir, time.Now().Add(-maxAge))
 	return nil
+}
+
+// Writable reports whether runs can be saved in dir, so a run ID is only
+// announced for a run that can be recorded.
+func Writable(dir string) error {
+	if dir == "" {
+		return errors.New("no home directory for the run history")
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, ".probe-*")
+	if err != nil {
+		return err
+	}
+	f.Close()
+	return os.Remove(f.Name())
 }
 
 // Prune deletes runs recorded before cutoff. A run's time comes from its ID,
@@ -153,7 +179,7 @@ func Load(dir, ref string) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	if len(ids) == 0 {
+	if len(ids) == 0 && ref == "last" {
 		return Record{}, errors.New("no runs recorded yet")
 	}
 	if ref == "last" {

@@ -639,7 +639,7 @@ func showPath(p string) string {
 // commands are no-ops, and required = false keeps git from failing for want
 // of one.
 func filtersOff(ctx context.Context, root string) ([]string, error) {
-	out, _, err := git(ctx, root, 1<<20, "config", "--name-only", "--get-regexp", `^filter\.`)
+	out, truncated, err := git(ctx, root, 1<<20, "config", "--name-only", "--get-regexp", `^filter\.`)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -650,11 +650,15 @@ func filtersOff(ctx context.Context, root string) ([]string, error) {
 		}
 		return nil, err
 	}
+	if truncated {
+		return nil, errors.New("--diff: too many git filter settings to switch them all off")
+	}
 	seen := map[string]bool{}
 	var args []string
 	for _, key := range strings.Split(strings.TrimSpace(out), "\n") {
 		i := strings.LastIndexByte(key, '.')
-		if !strings.HasPrefix(key, "filter.") || i <= len("filter.") {
+		// i == len("filter.") is a driver with an empty name (filter..clean).
+		if !strings.HasPrefix(key, "filter.") || i < len("filter.") {
 			continue
 		}
 		name := key[len("filter."):i]

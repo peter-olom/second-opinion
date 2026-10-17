@@ -84,9 +84,12 @@ func (p pi) Run(ctx context.Context, req Request) (string, error) {
 // piWouldMigrate reports whether pi's startup migration would rename
 // <repo>/.pi/commands to .pi/prompts.
 func piWouldMigrate(repo string) bool {
+	// pi checks both with existsSync, which follows symlinks: a dangling
+	// .pi/prompts counts as missing. Erring towards "would migrate", any
+	// commands entry counts, and prompts must resolve to count.
 	_, cmdErr := os.Lstat(filepath.Join(repo, ".pi", "commands"))
-	_, promptsErr := os.Lstat(filepath.Join(repo, ".pi", "prompts"))
-	return cmdErr == nil && os.IsNotExist(promptsErr)
+	_, promptsErr := os.Stat(filepath.Join(repo, ".pi", "prompts"))
+	return cmdErr == nil && promptsErr != nil
 }
 
 // piEffort maps to pi's thinking levels: off, minimal, low, medium, high, xhigh, max.

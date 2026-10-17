@@ -221,3 +221,33 @@ func TestSameSecondRunsKeepTheirOrder(t *testing.T) {
 		t.Errorf("List(1) = %v, want %s", recs, late.ID)
 	}
 }
+
+func TestPollingAMissingRunSaysItMayBeRunning(t *testing.T) {
+	for _, dir := range []string{filepath.Join(t.TempDir(), "absent"), t.TempDir()} {
+		_, err := Load(dir, "20261001-090000-abcdef12")
+		if err == nil || !strings.Contains(err.Error(), "may still be running") {
+			t.Errorf("dir %s: err = %v, want the may-still-be-running message", dir, err)
+		}
+	}
+}
+
+func TestSaveLeavesNoPartialRecord(t *testing.T) {
+	dir := t.TempDir()
+	r := Record{ID: NewID(time.Now()), Time: time.Now()}
+	// A leftover temporary file makes the write fail before linking.
+	os.WriteFile(filepath.Join(dir, ".tmp-"+r.ID+".json"), []byte("partial"), 0o600)
+	if err := Save(dir, r, time.Hour); err == nil {
+		t.Fatal("Save should fail when its temporary file can't be created")
+	}
+	if _, err := os.Stat(filepath.Join(dir, r.ID+".json")); !os.IsNotExist(err) {
+		t.Errorf("a failed save left a record behind (err %v)", err)
+	}
+	os.Remove(filepath.Join(dir, ".tmp-"+r.ID+".json"))
+	if err := Save(dir, r, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 || entries[0].Name() != r.ID+".json" {
+		t.Errorf("after a save the folder holds %v, want only the record", entries)
+	}
+}

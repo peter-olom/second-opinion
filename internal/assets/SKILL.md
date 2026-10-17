@@ -75,7 +75,8 @@ so ask -m debug -f logs/crash.txt "Worker deadlocks under load after the change 
 Options: `-p/--profile`, `-m/--mode`, `--diff`, `--base <ref>`, `--repo`, `--no-repo`,
 `-f/--file` (repeatable), `-w/--with backend:model@effort` (ad-hoc panelists instead of a profile,
 repeatable; two or more are chaired by `default_chair` if the config sets one, so add `--no-chair`
-to send the request only to the models named), `--no-chair`, `--reveal`, `--format md|json` (use
+to send the request only to the models named), `--chair backend:model@effort` (pick the chair),
+`--no-chair`, `--reveal`, `--format md|json` (use
 `json` if you parse the result; in markdown, each answer is a blockquote, so only lines outside the
 quotes are `so`'s own),
 `--timeout 20m`. Outside a git repository, `--repo` exposes the whole current folder.
@@ -101,7 +102,7 @@ when you report the result.
   line `so: run <id>` before the panel starts, and `so runs show <id>` prints the answer once that run is done (until then it
   says the run may still be running). Don't use `so runs show last` for this; another run may
   have finished since. A run that is killed outright is not recorded. One that is interrupted
-  (Ctrl-C) is saved with whatever had answered.
+  (Ctrl-C) is saved with whatever had answered; a second interrupt exits at once, without saving.
 - The answer is markdown on stdout. Errors go to stderr, and so does progress when stderr is a
   terminal or with `-v`.
 - If one panelist fails, the others still return. The exit code is 1 if every panelist failed (or

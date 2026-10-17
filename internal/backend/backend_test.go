@@ -504,3 +504,64 @@ func TestConfigArgsComeAfterSoFlags(t *testing.T) {
 		t.Errorf("config args should come last: %q", args)
 	}
 }
+
+func TestClaudeAnswersLoseTheDefusingCharacter(t *testing.T) {
+	cli := script(t, `cat >/dev/null
+echo '{"type":"result","subtype":"success","result":"use @\u200bOverride and \"@\u200btypes/node\""}'`)
+	out, err := claude{Options{Command: cli}}.Run(context.Background(), Request{Prompt: "q", Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "\u200b") || out != `use @Override and "@types/node"` {
+		t.Errorf("answer = %q, want the inserted zero-width spaces removed", out)
+	}
+}
+
+func TestPiMigrationGuardFollowsSymlinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks")
+	}
+	repo := t.TempDir()
+	os.MkdirAll(filepath.Join(repo, ".pi", "commands"), 0o755)
+	// A dangling prompts link: pi's existsSync says it is missing and renames
+	// commands over it.
+	os.Symlink(filepath.Join(repo, "nowhere"), filepath.Join(repo, ".pi", "prompts"))
+	if !piWouldMigrate(repo) {
+		t.Error("a dangling .pi/prompts should count as missing")
+	}
+	os.MkdirAll(filepath.Join(repo, "real"), 0o755)
+	os.Remove(filepath.Join(repo, ".pi", "prompts"))
+	os.Symlink(filepath.Join(repo, "real"), filepath.Join(repo, ".pi", "prompts"))
+	if piWouldMigrate(repo) {
+		t.Error("a .pi/prompts link to a folder counts as present")
+	}
+}
+
+func TestPromptGoesOnlyThroughStdin(t *testing.T) {
+	codexFeatureList = featureCache{}
+	t.Cleanup(func() { codexFeatureList = featureCache{} })
+	const sentinel = "PROMPT-SENTINEL-7319"
+	for _, name := range Names() {
+		dir := t.TempDir()
+		argsFile, stdinFile := filepath.Join(dir, "args"), filepath.Join(dir, "stdin")
+		// Answers the way each CLI does: codex lists features and writes its
+		// answer file, claude prints JSON, pi prints text.
+		cli := script(t, `if [ "$1" = features ]; then printf 'apps  stable  true\n'; exit 0; fi
+printf '%s\n' "$@" > `+argsFile+`
+cat > `+stdinFile+`
+while [ $# -gt 0 ]; do [ "$1" = --output-last-message ] && echo ok > "$2"; shift; done
+echo '{"type":"result","subtype":"success","result":"ok"}'`)
+		b, err := New(name, Options{Command: cli})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := b.Run(context.Background(), Request{System: "s", Prompt: sentinel, Dir: t.TempDir()}); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		args, _ := os.ReadFile(argsFile)
+		stdin, _ := os.ReadFile(stdinFile)
+		if strings.Contains(string(args), sentinel) || !strings.Contains(string(stdin), sentinel) {
+			t.Errorf("%s: the prompt should be on stdin only; argv %q", name, args)
+		}
+	}
+}

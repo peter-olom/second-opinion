@@ -501,3 +501,13 @@ func TestRunsShowPromptIsQuoted(t *testing.T) {
 		t.Errorf("the prompt should be shown, quoted:\n%s", out)
 	}
 }
+
+func TestWithheldModeRepoAccessIsNoted(t *testing.T) {
+	t.Chdir(t.TempDir()) // not a git repository
+	yes := true
+	var ws string
+	stderr := captureStderr(t, func() { ws, _ = resolveWorkspace(context.Background(), false, false, &yes) })
+	if ws != "" || !strings.Contains(stderr, "no repo access for this mode: not inside a git repository") {
+		t.Errorf("workspace %q, stderr %q; want none, with a note", ws, stderr)
+	}
+}

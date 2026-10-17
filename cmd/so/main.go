@@ -268,7 +268,9 @@ func cmdAsk(ctx context.Context, args []string) int {
 	var id string
 	if cfg.Recording() {
 		id = history.NewID(start)
-		if !*quiet {
+		if err := history.Writable(history.Dir()); err != nil {
+			fmt.Fprintln(os.Stderr, "so: this run won't be recorded:", err)
+		} else if !*quiet {
 			fmt.Fprintf(os.Stderr, "so: run %s\n", id)
 		}
 	}
@@ -400,6 +402,7 @@ func resolveWorkspace(ctx context.Context, explicit, disabled bool, modeDefault 
 		// open up all of $HOME. A mode default never does that; an explicit
 		// --repo gets the current folder instead, unless that is home itself.
 		if !explicit {
+			fmt.Fprintln(os.Stderr, "so: no repo access for this mode: the git repository is rooted at your home directory; pass --repo to share the current folder")
 			return "", nil
 		}
 		if containsHome(cwd) {
@@ -413,6 +416,7 @@ func resolveWorkspace(ctx context.Context, explicit, disabled bool, modeDefault 
 		}
 		return cwd, nil
 	}
+	fmt.Fprintln(os.Stderr, "so: no repo access for this mode: not inside a git repository; pass --repo to share the current folder")
 	return "", nil
 }
 

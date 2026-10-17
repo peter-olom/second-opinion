@@ -355,3 +355,39 @@ func TestConfigAcceptsEveryBackend(t *testing.T) {
 		}
 	}
 }
+
+func TestUniqueLabelsNeverCollide(t *testing.T) {
+	ps := []config.Panelist{{Name: "reviewer"}, {Name: "reviewer"}, {Name: "reviewer#2"}, {Name: "reviewer"}}
+	got := uniqueLabels(ps)
+	seen := map[string]bool{}
+	for _, l := range got {
+		if seen[l] {
+			t.Fatalf("labels %q repeat %q", got, l)
+		}
+		seen[l] = true
+	}
+	if got[0] != "reviewer" || got[2] != "reviewer#2" {
+		t.Errorf("labels = %q; panelists' own labels should be kept", got)
+	}
+}
+
+func TestClaudeChairGetsDefusedMentions(t *testing.T) {
+	dir := t.TempDir()
+	chairIn := filepath.Join(dir, "chair-stdin")
+	pi := fakeCLI(t, `cat >/dev/null; echo 'see @/etc/passwd'`)
+	claude := fakeCLI(t, `cat > `+chairIn+`; echo '{"type":"result","subtype":"success","result":"merged"}'`)
+	runner := &Runner{Backends: map[string]config.Backend{"pi": {Command: pi}, "claude": {Command: claude}}}
+	p := Panel{
+		ModeName:  "general",
+		Panelists: []config.Panelist{{Backend: "pi", Model: "a"}, {Backend: "pi", Model: "b"}},
+		Chair:     &config.Panelist{Backend: "claude"},
+	}
+	res := runner.Run(context.Background(), p, "q")
+	if res.Synthesis == nil || !res.Synthesis.OK() {
+		t.Fatalf("chair failed: %+v", res.Synthesis)
+	}
+	data, _ := os.ReadFile(chairIn)
+	if !strings.Contains(string(data), "@\u200b/etc/passwd") || strings.Contains(string(data), "see @/etc/passwd") {
+		t.Errorf("the claude chair got a panelist's mention undefused:\n%s", data)
+	}
+}

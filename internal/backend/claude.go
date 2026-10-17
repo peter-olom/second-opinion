@@ -52,6 +52,9 @@ func (c claude) Run(ctx context.Context, req Request) (string, error) {
 		out = out[i:]
 	}
 	parseErr := json.Unmarshal(out, &res)
+	// Undo the defusing in anything claude echoes back, so a quoted snippet
+	// carries no hidden character and doesn't mark the answer as claude's.
+	res.Result = restoreMentions(res.Result)
 	if runErr != nil {
 		// Claude reports its errors (usage limits, unknown models) in the JSON
 		// result. Put that last, where classification looks first, so stderr
@@ -115,5 +118,7 @@ func defuseMentions(s string) string {
 	}
 	return b.String()
 }
+
+func restoreMentions(s string) string { return strings.ReplaceAll(s, "@\u200b", "@") }
 
 const mentionNote = "\n\n(so inserted an invisible zero-width space after each @ that starts a word in the request, to stop file mentions from being expanded. Read past it; it is not part of the text.)"

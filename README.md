@@ -135,8 +135,9 @@ model, and `--reveal` or `so runs show --reveal` shows which models were involve
 ## Run history
 
 Each run is saved privately to `~/.local/state/second-opinion/runs/<run-id>.json`, or under
-`$XDG_STATE_HOME`. Files are `0600` and the folder is `0700`. A record holds the prompt, the system
-prompts sent, every answer and error, timings, and which model was which panelist (as configured:
+`$XDG_STATE_HOME`. Files are `0600` and the folder is `0700`. A record holds the prompt and the
+system prompts as `so` built them (before the small per-backend changes: claude's defused mentions
+and note, pi's base prompt), every answer and error, timings, and which model was which panelist (as configured:
 a panelist without a `model` used its CLI's default, which `so` can't see, and the key says so). The run ID
 is printed to stderr as soon as the run starts (`so: run <id>`, unless `-q`) and appears at the top
 of the answer; if the record can't be saved, `so` says so on stderr and the

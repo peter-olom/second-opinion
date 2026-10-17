@@ -295,12 +295,24 @@ func letter(i int) string {
 // uniqueLabels suffixes duplicate labels with #2, #3, … so responses stay distinguishable.
 func uniqueLabels(ps []config.Panelist) []string {
 	labels := make([]string, len(ps))
-	seen := map[string]int{}
+	// Every first use of a label is reserved before any suffix is made, so
+	// a suffixed label can't collide with one a panelist already has.
+	used := map[string]bool{}
+	first := make([]bool, len(ps))
+	for i, p := range ps {
+		if l := p.Label(); !used[l] {
+			used[l], first[i] = true, true
+		}
+	}
 	for i, p := range ps {
 		l := p.Label()
-		seen[l]++
-		if n := seen[l]; n > 1 {
+		if !first[i] {
+			n := 2
+			for used[fmt.Sprintf("%s#%d", l, n)] {
+				n++
+			}
 			l = fmt.Sprintf("%s#%d", l, n)
+			used[l] = true
 		}
 		labels[i] = l
 	}
