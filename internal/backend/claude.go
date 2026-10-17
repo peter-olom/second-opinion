@@ -68,6 +68,11 @@ func (c claude) Run(ctx context.Context, req Request) (string, error) {
 	// Undo the defusing in anything claude echoes back, so a quoted snippet
 	// carries no hidden character and doesn't mark the answer as claude's.
 	res.Result = restoreMentions(res.Result)
+	// If claude split a marker from its @, a lone one would still mark the
+	// answer as claude's; when the request had none of its own, drop them.
+	if !strings.Contains(req.Prompt, "\u200b") {
+		res.Result = strings.ReplaceAll(res.Result, "\u200b", "")
+	}
 	if runErr != nil {
 		// Claude reports its errors (usage limits, unknown models) in the JSON
 		// result. Put that last, where classification looks first, so stderr

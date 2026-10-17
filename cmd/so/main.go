@@ -46,13 +46,13 @@ Usage:
   so profiles               List profiles
   so modes [name]           List modes, or show the prompts a mode produces
   so runs [show <id>]       List recorded runs, or show one (--reveal to see which model said what)
-  so doctor [--ping]        Check backend CLIs, and optionally ping each configured model
+  so doctor [--ping|--canary]  Check backend CLIs; ping each model, or check what each can read
   so init [--force]         Write the default config for editing
   so uninstall [--all]      Remove so, its skills, and its run history (--all: config too)
-  so skill [install]        Print the agent skill, or install it for Claude Code, Codex, and pi
+  so skill [install [--dir d]]  Print the agent skill, or install it for Claude Code, Codex, pi, or a folder
   so version
 
-Run "so ask --help" for ask flags.
+Run "so ask --help" for ask flags (--diff, --repo, -w, --chair, …), and --help on any command.
 `
 
 func main() {
@@ -263,11 +263,15 @@ func cmdAsk(ctx context.Context, args []string) int {
 	if p.Workspace, err = resolveWorkspace(ctx, *repo, *noRepo, p.Mode.Repo); err != nil {
 		return failCtx(ctx, err)
 	}
+	if p.Workspace != "" && contains(p.Workspace, history.StateDir()) {
+		fmt.Fprintln(os.Stderr, "so: the run history is inside the repository shared with the panel, so panelists can read earlier runs, including which model was which; move XDG_STATE_HOME or use --no-repo")
+	}
 	if p.Workspace != "" {
 		// Anywhere in the repository, not only at its root: a harness run
 		// in a subfolder keeps its state there.
 		found, err := gitctx.HarnessPaths(ctx, p.Workspace, 5)
 		if err != nil && ctx.Err() == nil {
+			fmt.Fprintf(os.Stderr, "so: could not check the whole repository for agent-harness state (%v); checked its root only\n", err)
 			found = nil
 			for _, name := range harness.Names {
 				if _, err := os.Lstat(filepath.Join(p.Workspace, name)); err == nil {
@@ -459,6 +463,33 @@ func resolveWorkspace(ctx context.Context, explicit, disabled bool, modeDefault 
 		fmt.Fprintln(os.Stderr, "so: no repo access for this mode: not inside a git repository; pass --repo to share the current folder")
 	}
 	return "", nil
+}
+
+// contains reports whether path is root or inside it ("" is never inside).
+func contains(root, path string) bool {
+	if path == "" {
+		return false
+	}
+	rel, err := filepath.Rel(realPath(root), realPath(path))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// realPath resolves symlinks in p, through its nearest existing parent if
+// p itself doesn't exist yet.
+func realPath(p string) string {
+	p = filepath.Clean(p)
+	var rest []string
+	for {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return filepath.Join(append([]string{r}, rest...)...)
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return filepath.Join(append([]string{p}, rest...)...)
+		}
+		rest = append([]string{filepath.Base(p)}, rest...)
+		p = parent
+	}
 }
 
 // inHomeDotDir reports whether dir is inside a dot-folder directly under the

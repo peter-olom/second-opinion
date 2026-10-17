@@ -489,8 +489,11 @@ func TestDiffFailsClosedOnTooManyPaths(t *testing.T) {
 	for i := range 20 {
 		write(t, dir, fmt.Sprintf("file-%02d.txt", i), "x\n")
 	}
-	if _, err := Diff(context.Background(), dir, "HEAD", ""); err == nil || !strings.Contains(err.Error(), "too many changed files") {
-		t.Errorf("err = %v, want a refusal rather than a partial check", err)
+	if _, err := Diff(context.Background(), dir, "HEAD", ""); err == nil || !strings.Contains(err.Error(), "too many untracked files") {
+		t.Errorf("err = %v, want a refusal naming untracked files, rather than a partial check", err)
+	}
+	if _, err := HarnessPaths(context.Background(), dir, 5); err == nil {
+		t.Error("HarnessPaths should report that it couldn't list everything")
 	}
 }
 
@@ -1085,5 +1088,27 @@ func TestHarnessPathsFindsNestedState(t *testing.T) {
 	}
 	if !slices.Contains(got, "packages/app/.recallstack") {
 		t.Errorf("HarnessPaths = %q, want the nested .recallstack", got)
+	}
+}
+
+func TestFilterDriversNamedLikeAttributeStates(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, ".gitattributes", "u.txt filter=unset\ns.txt filter=unspecified\n")
+	write(t, dir, "u.txt", "PLAINTEXT-U\n")
+	write(t, dir, "s.txt", "PLAINTEXT-S\n")
+	write(t, dir, "a.go", "package a // ordinary\n")
+	got, err := filteredPaths(context.Background(), dir, []string{"u.txt", "s.txt", "a.go"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got["u.txt"] || !got["s.txt"] || got["a.go"] {
+		t.Errorf("filtered = %v; drivers named unset/unspecified must count, a.go must not", got)
+	}
+	ctx, err := Diff(context.Background(), dir, "HEAD", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ctx.Text, "PLAINTEXT-") || !strings.Contains(ctx.Text, "ordinary") {
+		t.Errorf("the filtered files must be left out, a.go kept:\n%s", ctx.Text)
 	}
 }

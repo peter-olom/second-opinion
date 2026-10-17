@@ -107,10 +107,14 @@ func TestCodexLockdown(t *testing.T) {
 }
 
 func TestParseCodexFeatures(t *testing.T) {
-	out := "apps                       stable             true\nshell_tool  stable  true\nsqlite  removed  false\nsome banner line\n"
+	out := "apps                       stable             true\nshell_tool  stable  true\n\nsqlite  removed  false\n"
 	got := parseCodexFeatures(out)
 	if !slices.Equal(got, []string{"apps", "shell_tool", "sqlite"}) {
 		t.Errorf("parseCodexFeatures = %v", got)
+	}
+	// A line in an unknown format could hide features: nothing is trusted.
+	if got := parseCodexFeatures(out + "apps (stable): on\n"); got != nil {
+		t.Errorf("an unparseable line should fail closed, got %v", got)
 	}
 }
 
@@ -594,5 +598,22 @@ func TestRipgrepConfigIsDropped(t *testing.T) {
 	env, _ := os.ReadFile(envFile)
 	if strings.Contains(string(env), "RIPGREP_CONFIG_PATH") || !strings.Contains(string(env), "KEEP=1") {
 		t.Errorf("RIPGREP_CONFIG_PATH should be dropped, other env kept:\n%s", env)
+	}
+}
+
+func TestClaudeDropsLoneMarkers(t *testing.T) {
+	cli := script(t, `cat >/dev/null
+echo '{"type":"result","subtype":"success","result":"split \u200b and @x"}'`)
+	out, err := claude{Options{Command: cli}}.Run(context.Background(), Request{Prompt: "see @x", Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "\u200b") {
+		t.Errorf("a lone marker survived: %q", out)
+	}
+	// A request that holds zero-width spaces of its own keeps them.
+	out, _ = claude{Options{Command: cli}}.Run(context.Background(), Request{Prompt: "own \u200b", Dir: t.TempDir()})
+	if !strings.Contains(out, "\u200b") {
+		t.Errorf("a zero-width space from the request itself was dropped: %q", out)
 	}
 }

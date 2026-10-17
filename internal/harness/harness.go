@@ -11,11 +11,13 @@ import "strings"
 var Names = []string{".recallstack", ".specstory", ".aider.chat.history.md", ".aider.input.history"}
 
 // Contains reports whether a slash-separated relative path is, or is
-// inside, harness state at any depth.
+// inside, harness state at any depth. Case is ignored: on a
+// case-insensitive filesystem a harness writing .specstory/ fills a
+// committed .SPECSTORY/.
 func Contains(path string) bool {
 	for _, part := range strings.Split(path, "/") {
 		for _, n := range Names {
-			if part == n {
+			if strings.EqualFold(part, n) {
 				return true
 			}
 		}

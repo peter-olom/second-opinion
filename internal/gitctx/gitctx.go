@@ -64,6 +64,8 @@ func Root(ctx context.Context, dir string) (string, error) {
 	return root, nil
 }
 
+var errTooManyPaths = errors.New("listing over the size limit")
+
 // ErrForeignWorkTree marks a work tree that doesn't hold its repository's .git.
 var ErrForeignWorkTree = errors.New("not using it")
 
@@ -209,6 +211,9 @@ func Diff(ctx context.Context, dir, base, nonce string) (Context, error) {
 	}
 	untracked, err := gitPaths(ctx, root, "ls-files", "--others", "--exclude-standard", "-z")
 	if err != nil {
+		if errors.Is(err, errTooManyPaths) {
+			return Context{}, errors.New("--diff: too many untracked files to check; add build output and the like to .gitignore")
+		}
 		return Context{}, err
 	}
 	// Files under a git filter (git-crypt, transcrypt, sops, LFS, ...) can be
@@ -625,11 +630,15 @@ func filteredPaths(ctx context.Context, root string, paths []string, source stri
 	}
 	var out, stderr limitedBuffer
 	out.limit, stderr.limit = 16<<20, 64<<10
-	args := []string{"-c", "core.fsmonitor=false", "check-attr", "-z", "--stdin"}
+	// --all lists only attributes a path actually has. A plain "filter"
+	// query prints "unset" or "unspecified" for a path without one, which a
+	// driver could also be named; with --all, any filter listed counts
+	// (a "-filter" path is left out too, which errs the safe way).
+	args := []string{"-c", "core.fsmonitor=false", "check-attr", "-z", "--stdin", "--all"}
 	if source != "" {
 		args = append(args, "--source", source) // that commit's .gitattributes
 	}
-	cmd := exec.CommandContext(ctx, "git", append(args, "filter")...)
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = root
 	cmd.Env = append(gitEnv(), "GIT_OPTIONAL_LOCKS=0")
 	cmd.WaitDelay = 5 * time.Second
@@ -650,9 +659,9 @@ func filteredPaths(ctx context.Context, root string, paths []string, source stri
 	// Records are path, attribute, value, each NUL-terminated.
 	f := strings.Split(out.String(), "\x00")
 	for i := 0; i+2 < len(f); i += 3 {
-		path, attr, value := f[i], f[i+1], f[i+2]
+		path, attr := f[i], f[i+1]
 		switch {
-		case attr == "filter" && value != "unspecified" && value != "unset":
+		case attr == "filter":
 			filtered[path] = true
 		}
 	}
@@ -665,7 +674,7 @@ func gitPaths(ctx context.Context, dir string, args ...string) ([]string, error)
 		return nil, err
 	}
 	if truncated {
-		return nil, errors.New("--diff: too many changed files; use a narrower --base")
+		return nil, fmt.Errorf("--diff: too many changed files; use a narrower --base (%w)", errTooManyPaths)
 	}
 	var paths []string
 	for _, p := range strings.Split(out, "\x00") {

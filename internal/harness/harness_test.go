@@ -10,6 +10,8 @@ func TestContains(t *testing.T) {
 		"docs/.aider.input.history":         true,
 		"src/recallstack.go":                false,
 		"a/.specstory-notes/x":              false,
+		".SPECSTORY/history/x.md":           true,
+		"pkg/.RecallStack":                  true,
 	} {
 		if got := Contains(path); got != want {
 			t.Errorf("Contains(%q) = %v, want %v", path, got, want)

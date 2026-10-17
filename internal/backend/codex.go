@@ -158,7 +158,7 @@ func codexFeatures(ctx context.Context, o Options) ([]string, error) {
 	}
 	names := parseCodexFeatures(string(out))
 	if len(names) == 0 {
-		return nil, errors.New("codex: `codex features list` returned nothing; cannot disable its tools, so not running it")
+		return nil, errors.New("codex: `codex features list` returned nothing so could parse; cannot disable its tools, so not running it")
 	}
 	codexFeatureList.names = names
 	return names, nil
@@ -168,10 +168,16 @@ func codexFeatures(ctx context.Context, o Options) ([]string, error) {
 func parseCodexFeatures(out string) []string {
 	var names []string
 	for _, line := range strings.Split(out, "\n") {
-		f := strings.Fields(line)
-		if len(f) >= 3 && (f[len(f)-1] == "true" || f[len(f)-1] == "false") {
-			names = append(names, f[0])
+		if strings.TrimSpace(line) == "" {
+			continue
 		}
+		f := strings.Fields(line)
+		if len(f) < 3 || (f[len(f)-1] != "true" && f[len(f)-1] != "false") {
+			// An unknown line format could hide features the lockdown
+			// should disable: fail closed rather than disable some.
+			return nil
+		}
+		names = append(names, f[0])
 	}
 	return names
 }

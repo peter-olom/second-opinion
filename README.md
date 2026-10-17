@@ -169,7 +169,8 @@ The caller always writes the prompt. There are two ways to give the panel more c
   not attached. Git's textconv and external diff drivers are off, and so are the filter drivers in
   your git config (they never run during `--diff`). Files with a git `filter` in `.gitattributes`
   (git-crypt, transcrypt, sops-style filters, LFS, …) are left out of both the diff and the
-  attachments, since their working copies may be decrypted. A filter counts if the working tree's
+  attachments, since their working copies may be decrypted (so is a file marked `-filter`,
+which errs the safe way). A filter counts if the working tree's
   attributes name it, or HEAD's and the base's for `--base` (if the change edits `.gitattributes`
   with plain `--diff`, HEAD's too); checking committed attributes needs git 2.40 or later. If there are too many changed
   files to check this, `--diff` stops rather than send a partial check. Untracked files are attached
@@ -263,7 +264,8 @@ backend's config `env` can clear it (`env = { ANTHROPIC_API_KEY = "" }`). pi has
 and environment select.
 
 Agent harnesses sometimes keep session state in the repository (`.recallstack/`, `.specstory/`,
-aider's history files). With repo access, claude panelists are denied those paths (Read rules,
+aider's history files; matched at any depth and in any letter case). `--diff` never attaches them.
+With repo access, claude panelists are denied those paths (Read rules,
 which cover Grep and Glob too), and `so` warns that codex and pi panelists can still read them.
 
 Claude Code reads any file named in an `@path` mention in its prompt, in code blocks too, whatever
@@ -289,6 +291,9 @@ reported, not failed), and two name the file in an `@` mention, the way claude w
 without and with repo access (with repo access, again only claude must refuse). A ✓ means it did not read the file on that
 run, which is evidence rather than proof. In testing, a Codex panelist with this lockdown didn't read the file in
 10 of 10 runs, while the same check caught an unlocked Codex every time.
+
+If your run history (`$XDG_STATE_HOME`) is inside the repository shared with the panel, `so`
+warns: panelists could read earlier runs, including which model was which.
 
 `so` sets `SECOND_OPINION_DEPTH=1` for every panelist (including the commands Codex runs) and refuses to start a panel, ping models, or
 uninstall when that variable is present. This stops accidental recursion; it is cooperative, so a

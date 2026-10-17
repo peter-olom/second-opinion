@@ -750,3 +750,48 @@ printf '{"type":"result","subtype":"success","result":"%s"}\n' "$content"
 		t.Errorf("a claude that reads through the symlink must fail the canary: exit %d\n%s", code, out)
 	}
 }
+
+func TestAnonymousJSONHasNoIdentities(t *testing.T) {
+	unsetEnv(t, backend.EnvGuard)
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "pi")
+	// One panelist answers, one fails with its model in the error.
+	os.WriteFile(fake, []byte("#!/bin/sh\nwhile [ $# -gt 0 ]; do [ \"$1\" = --model ] && model=$2; shift; done\ncat >/dev/null\n[ \"$model\" = zulu-secret ] && { echo \"pi: model $model is broken\" >&2; exit 1; }\necho fine\n"), 0o755)
+	cfg := filepath.Join(dir, "config.toml")
+	os.WriteFile(cfg, []byte(stubOtherBackends+"[backends.pi]\ncommand = \""+fake+"\"\n"), 0o644)
+	out := captureStdout(t, func() {
+		captureStderr(t, func() {
+			run(context.Background(), []string{"ask", "--config", cfg, "--no-repo", "--format", "json", "-w", "pi:yankee-secret", "-w", "pi:zulu-secret", "--no-chair", "q"})
+		})
+	})
+	var res map[string]any
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("not JSON (%v):\n%s", err, out)
+	}
+	for _, leak := range []string{"yankee-secret", "zulu-secret", `"backend"`, `"panelist"`} {
+		if strings.Contains(out, leak) {
+			t.Errorf("anonymous JSON leaks %s:\n%s", leak, out)
+		}
+	}
+	if !strings.Contains(out, "fine") || !strings.Contains(out, "Panelist A") {
+		t.Errorf("the answers should still be there:\n%s", out)
+	}
+}
+
+func TestHistoryInsideTheSharedRepoIsWarned(t *testing.T) {
+	unsetEnv(t, backend.EnvGuard)
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	t.Setenv("XDG_STATE_HOME", filepath.Join(repo, "state"))
+	t.Chdir(repo)
+	stderr := captureStderr(t, func() {
+		captureStdout(t, func() {
+			run(context.Background(), []string{"ask", "--config", fakePiConfig(t), "--repo", "-w", "pi:x", "q"})
+		})
+	})
+	if !strings.Contains(stderr, "the run history is inside the repository shared with the panel") {
+		t.Errorf("stderr = %q, want the history warning", stderr)
+	}
+}

@@ -148,12 +148,21 @@ func TestSystemPromptsDescribeRepoAccess(t *testing.T) {
 }
 
 func TestAnonymousPanel(t *testing.T) {
-	// Every fake model answers with its own model name; the chair echoes its
-	// prompt so the test can inspect what the chair saw.
+	// Every fake model answers with its model name in rot13, so the chair's
+	// input can be searched for the real names; the chair echoes its prompt
+	// so the test can inspect what the chair saw.
 	fake := fakeCLI(t, `
 while [ $# -gt 0 ]; do [ "$1" = --model ] && model=$2; shift; done
 input=$(cat)
-if [ "$model" = chair ]; then echo "$input"; else echo "opinion of $model"; fi`)
+if [ "$model" = chair ]; then echo "$input"; else echo "opinion $(printf '%s' "$model" | tr 'a-z' 'n-za-m')"; fi`)
+	rot13 := func(s string) string {
+		return strings.Map(func(r rune) rune {
+			if r >= 'a' && r <= 'z' {
+				return 'a' + (r-'a'+13)%26
+			}
+			return r
+		}, s)
+	}
 	runner := &Runner{Backends: map[string]config.Backend{"pi": {Command: fake}}}
 	p := Panel{
 		ModeName: "review",
@@ -177,7 +186,7 @@ if [ "$model" = chair ]; then echo "$input"; else echo "opinion of $model"; fi`)
 			if want := "Panelist " + letter(i); o.Label != want {
 				t.Fatalf("opinion %d label = %q, want %q (opinions in letter order)", i, o.Label, want)
 			}
-			if o.Panelist == nil || o.Output != "opinion of "+o.Panelist.Model {
+			if o.Panelist == nil || o.Output != "opinion "+rot13(o.Panelist.Model) {
 				t.Fatalf("%s: output %q does not belong to panelist %+v", o.Label, o.Output, o.Panelist)
 			}
 			order += o.Panelist.Model + " "
@@ -188,8 +197,10 @@ if [ "$model" = chair ]; then echo "$input"; else echo "opinion of $model"; fi`)
 			t.Fatalf("synthesis = %+v, want an anonymous chair", res.Synthesis)
 		}
 		chairSaw := res.Synthesis.Output
-		if strings.Contains(chairSaw, "pi:") {
-			t.Fatalf("chair prompt leaks a panelist identity:\n%s", chairSaw)
+		for _, leak := range []string{"pi:", "alpha", "beta", "gamma", "backend", "model="} {
+			if strings.Contains(chairSaw, leak) {
+				t.Fatalf("chair prompt leaks a panelist identity (%q):\n%s", leak, chairSaw)
+			}
 		}
 		for _, want := range []string{`panelist="Panelist A"`, `panelist="Panelist C"`} {
 			if !strings.Contains(chairSaw, want) {
