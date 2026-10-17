@@ -292,6 +292,8 @@ func TestLoadRejectsBadValues(t *testing.T) {
 		"fallback effort": {"[profiles.p]\npanelists = [{ backend = \"pi\", fallback = [{ backend = \"pi\", effort = \"hgih\" }] }]\n", `unknown effort "hgih"`},
 		"default chair":   {"default_chair = { backend = \"pi\", effort = \"hgih\" }\n", `default_chair: unknown effort`},
 		"history_days 0":  {"history_days = 0\n", "history_days = 0 is not allowed"},
+		"dash model":      {"[profiles.p]\npanelists = [{ backend = \"pi\", model = \"--tools\" }]\n", "can't start with -"},
+		"dash provider":   {"[profiles.p]\npanelists = [{ backend = \"pi\", provider = \"-x\" }]\n", "can't start with -"},
 	} {
 		path := filepath.Join(t.TempDir(), "config.toml")
 		if err := os.WriteFile(path, []byte(tc.toml), 0o644); err != nil {
@@ -305,5 +307,11 @@ func TestLoadRejectsBadValues(t *testing.T) {
 	os.WriteFile(path, []byte("[profiles.p]\npanelists = [{ backend = \"pi\", effort = \"high\" }]\n"), 0o644)
 	if _, err := Load(path); err != nil {
 		t.Errorf("a valid effort was rejected: %v", err)
+	}
+}
+
+func TestParseSpecRejectsFlagLikeModels(t *testing.T) {
+	if _, err := ParseSpec("pi:--tools"); err == nil {
+		t.Error("a model that starts with - should be rejected")
 	}
 }

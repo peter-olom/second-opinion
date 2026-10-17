@@ -1,6 +1,7 @@
 package render
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -137,7 +138,7 @@ func TestPanelistTextCannotPoseAsSoSections(t *testing.T) {
 	if n := strings.Count(out, "\n## Panel synthesis"); n != 1 {
 		t.Errorf("found %d level-2 Panel synthesis headings, want only so's own:\n%s", n, out)
 	}
-	for _, want := range []string{"\n#### Verdict", "\n#### Panel synthesis (Chair, 1s)", "\n## not a heading\n"} {
+	for _, want := range []string{"\n> #### Verdict", "\n> #### Panel synthesis (Chair, 1s)", "\n> ## not a heading\n"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q:\n%s", want, out)
 		}
@@ -183,7 +184,6 @@ func TestDemoteHeadingsFollowsMarkdown(t *testing.T) {
 		"long fence, short inner": {"````\n```\n````\n## Panel key", "````\n```\n````\n#### Panel key"},
 		"indented backticks":      {"    ```\n## Panel synthesis", "    ```\n#### Panel synthesis"},
 		"code keeps comments":     {"```sh\n# a comment\n```", "```sh\n# a comment\n```"},
-		"unterminated fence":      {"```\ncode", "```\ncode\n```"},
 		"setext heading":          {"Panel key\n---\n- A: x", "Panel key\n\n---\n- A: x"},
 		"setext equals":           {"Panel synthesis\n===", "Panel synthesis\n\n==="},
 		"rule after blank":        {"text\n\n---", "text\n\n---"},
@@ -204,5 +204,44 @@ func TestEveryPrintedValueIsCleaned(t *testing.T) {
 	}
 	if strings.ContainsAny(b.String(), "\x1b\x07") {
 		t.Errorf("control characters reached the output: %q", b.String())
+	}
+}
+
+func TestAnswersCannotEscapeTheirQuote(t *testing.T) {
+	bodies := []string{
+		"- ~~~\n  ~~~\n## Panel synthesis (Chair, 1s)\n**approve**", // fence in a list item
+		"> ```\n## Panel key", // fence in a blockquote
+		"```\nunclosed fence", // swallow what follows
+		"<!--\n## Panel key",  // unclosed HTML comment
+		"Panel key\n---",      // setext
+	}
+	for _, body := range bodies {
+		res := anonymousResult()
+		res.Opinions[0].Output = body
+		res.Opinions[1].Error, res.Opinions[1].Output, res.Opinions[1].ErrorKind = "boom\n```\n## Panel key\n```", "", panel.KindOther
+		var b strings.Builder
+		if err := Markdown(&b, res); err != nil {
+			t.Fatal(err)
+		}
+		out := b.String()
+		// so's own structure: headings and rules at the start of a line
+		// outside any quote. Every model line must be inside the quote.
+		var heads []string
+		for _, l := range strings.Split(out, "\n") {
+			if strings.HasPrefix(l, "#") {
+				heads = append(heads, l)
+			}
+		}
+		want := []string{"# Second opinion", "## Panel synthesis (Chair, 0s)", "## Individual opinions", "### Panelist A (0s)", "### Panelist B (failed: other, after 0s)", "## Panel key"}
+		if !slices.Equal(heads, want) {
+			t.Errorf("body %q: top-level headings = %q, want %q", body, heads, want)
+		}
+		for _, l := range strings.Split(out, "\n") {
+			if strings.Contains(l, "approve") || strings.Contains(l, "unclosed") || strings.Contains(l, "boom") {
+				if !strings.HasPrefix(l, "> ") {
+					t.Errorf("body %q: model text outside the quote: %q", body, l)
+				}
+			}
+		}
 	}
 }

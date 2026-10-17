@@ -77,9 +77,12 @@ An ad-hoc `--with` panel of two or more models is chaired by `default_chair` if 
 one (or `--chair`), and the chair receives the whole request and every answer. Add `--no-chair` to
 send the request only to the models you named.
 
-In markdown output, each answer's own headings are moved two levels down, so a model's text can't
-pass for one of `so`'s sections (`## Panel synthesis`, `## Panel key`), and terminal control
-characters are removed. Use `--format json` when a program reads the result.
+In markdown output, each answer (and each error) is a blockquote: every line starts with `> `.
+Nothing inside a blockquote can be a top-level heading, and Markdown closes anything left open in it
+(an unclosed code fence, say) where the quote ends, so a model's text can't pass for one of `so`'s
+sections (`## Panel synthesis`, `## Panel key`) or hide the ones after it. Answer headings are also
+moved two levels down to read as subsections, and terminal control characters are removed. Use
+`--format json` when a program reads the result.
 
 The result goes to stdout. Progress goes to stderr when stderr is a terminal, or with `-v`. If some
 panelists fail, the run still succeeds with the ones that answered. Exit codes: 0 when at least
@@ -142,7 +145,7 @@ answer has no run ID.
 so runs                          # recent runs: ID, profile, mode, how many answered, prompt
 so runs show last                # reprint a run (still anonymous)
 so runs show a3f9 --reveal       # unblind it: append the panel key (any unique part of the ID works)
-so runs show a3f9 --prompt       # include the exact prompt the panel received
+so runs show a3f9 --prompt       # include the prompt the panel received (--json for the exact bytes)
 so runs show a3f9 --json         # the record as JSON (still anonymous without --reveal)
 ```
 
@@ -194,7 +197,7 @@ reach differs, and these are the tested guarantees:
 
 | backend | without repo access | with repo access |
 |---|---|---|
-| claude | No tools at all (`--tools ""`). | `Read`, `Grep`, `Glob` only. Reads outside the repository are denied (verified: Claude Code asks for a permission it never gets). |
+| claude | No tools at all (`--tools ""`). | `Read`, `Grep`, `Glob` only. Reads outside the repository are denied, including through symlinks in the repository and for `Grep` and `Glob` (verified: Claude Code asks for a permission it never gets). |
 | codex | Every Codex feature except networking is disabled, including **connected apps** (Gmail, GitHub, Jira, …), browser and computer use, sub-agents, image generation, and web search; so are its shell tools. Codex has no switch that guarantees no tools at all, so a read-only command path may occasionally remain. | The same, but with read-only commands enabled so it can explore the repository. Those can read any file you can read, not just the repository. The repository's `AGENTS.md` is not loaded (`project_doc_max_bytes = 0`). |
 | pi | No tools (`--no-tools`) and no context files. | `read`, `grep`, `find`, `ls`, which are not confined to the repository. Still no context files (`--no-context-files`), so no `AGENTS.md` is loaded. |
 

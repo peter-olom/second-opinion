@@ -200,3 +200,24 @@ func TestIDsUseUTC(t *testing.T) {
 		t.Errorf("NewID = %q, want the UTC time", id)
 	}
 }
+
+func TestSameSecondRunsKeepTheirOrder(t *testing.T) {
+	dir := t.TempDir()
+	base := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	// The later run gets the smaller random suffix.
+	early := Record{ID: "20261001-090000-ffffffff", Time: base.Add(100 * time.Millisecond)}
+	late := Record{ID: "20261001-090000-00000000", Time: base.Add(900 * time.Millisecond)}
+	for _, r := range []Record{early, late} {
+		if err := Save(dir, r, 1000*24*time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := Load(dir, "last")
+	if err != nil || got.ID != late.ID {
+		t.Errorf("last = %s (%v), want %s", got.ID, err, late.ID)
+	}
+	recs, _ := List(dir, 1)
+	if len(recs) != 1 || recs[0].ID != late.ID {
+		t.Errorf("List(1) = %v, want %s", recs, late.ID)
+	}
+}

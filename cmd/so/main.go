@@ -164,9 +164,9 @@ func cmdAsk(ctx context.Context, args []string) int {
 		"The prompt is taken from the arguments, or from stdin if there are none.\n"+
 		"End the arguments with - to attach stdin as well (e.g. git diff | so ask -m review \"...\" -).")
 	profile := fs.StringP("profile", "p", "", "profile to ask (default from config)")
-	mode := fs.StringP("mode", "m", "", "response mode, e.g. general, review, plan, debug")
+	mode := fs.StringP("mode", "m", "", "response mode: general, review, plan, debug, audit, or one from your config")
 	files := fs.StringArrayP("file", "f", nil, "attach a file to the prompt (repeatable)")
-	diff := fs.Bool("diff", false, "attach the git diff (against --base) and the full contents of changed files")
+	diff := fs.Bool("diff", false, "attach the git diff (against --base) and the full contents of changed and untracked (not ignored) files")
 	base := fs.String("base", "", "base ref for --diff, e.g. main (default HEAD: uncommitted changes); implies --diff")
 	repo := fs.Bool("repo", false, "give the panel read-only access to the current repository")
 	noRepo := fs.Bool("no-repo", false, "no repository access, even if the mode enables it by default")
@@ -228,6 +228,9 @@ func cmdAsk(ctx context.Context, args []string) int {
 		// Same rule as repo access: never collect from a repository rooted
 		// at home or above (a dotfiles repo in ~), whose untracked files
 		// could be anything in $HOME.
+		if err := checkHome(); err != nil {
+			return fail(fmt.Errorf("--diff: %w", err))
+		}
 		if root, err := gitctx.Root(ctx, "."); err == nil && containsHome(root) {
 			return fail(errors.New("--diff would collect from a git repository rooted at your home directory; run so inside a project repository"))
 		}
@@ -364,6 +367,15 @@ func resolveWorkspace(ctx context.Context, explicit, disabled bool, modeDefault 
 	if disabled || (!explicit && (modeDefault == nil || !*modeDefault)) {
 		return "", nil
 	}
+	// Without a home directory, what repo access would expose can't be
+	// checked; say so rather than blame a home-rooted repository.
+	if err := checkHome(); err != nil {
+		if explicit {
+			return "", fmt.Errorf("--repo: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "so: no repo access for this mode: %v\n", err)
+		return "", nil
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", err
@@ -398,6 +410,19 @@ func resolveWorkspace(ctx context.Context, explicit, disabled bool, modeDefault 
 		return cwd, nil
 	}
 	return "", nil
+}
+
+// checkHome reports whether the home directory can be resolved, which
+// containsHome needs to give a real answer.
+func checkHome() error {
+	home, err := os.UserHomeDir()
+	if err == nil {
+		_, err = filepath.EvalSymlinks(home)
+	}
+	if err != nil {
+		return fmt.Errorf("cannot resolve your home directory to check what would be exposed (%v); set HOME", err)
+	}
+	return nil
 }
 
 // containsHome reports whether dir is the home directory or one of its ancestors.

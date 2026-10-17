@@ -183,8 +183,12 @@ chair = { backend = "pi", model = "chair" }
 		t.Errorf("ask output should show the run ID:\n%s", out)
 	}
 
-	blind := captureStdout(t, func() { run(context.Background(), []string{"runs", "show", "last"}) })
-	if strings.Contains(blind, "pi:alpha") {
+	var showCode int
+	blind := captureStdout(t, func() { showCode = run(context.Background(), []string{"runs", "show", "last"}) })
+	if showCode != 0 || !strings.Contains(blind, "run `"+id+"`") || !strings.Contains(blind, "opinion of alpha") {
+		t.Errorf("runs show last = exit %d:\n%s\nwant the run and its answers", showCode, blind)
+	}
+	if strings.Contains(blind, "pi:alpha") || strings.Contains(blind, "Panel key") {
 		t.Errorf("runs show should stay blind without --reveal:\n%s", blind)
 	}
 	revealed := captureStdout(t, func() { run(context.Background(), []string{"runs", "show", "last", "--reveal"}) })
@@ -418,5 +422,19 @@ func TestInterruptedRunIsRecorded(t *testing.T) {
 	}
 	if ok != 1 || cancelled != 1 || res.Synthesis != nil {
 		t.Errorf("saved %d ok, %d cancelled, synthesis %v; want 1, 1, none", ok, cancelled, res.Synthesis != nil)
+	}
+}
+
+func TestUnresolvableHomeIsNamed(t *testing.T) {
+	t.Setenv("HOME", filepath.Join(t.TempDir(), "missing"))
+	t.Setenv("USERPROFILE", filepath.Join(t.TempDir(), "missing"))
+	if _, err := resolveWorkspace(context.Background(), true, false, nil); err == nil || !strings.Contains(err.Error(), "cannot resolve your home directory") {
+		t.Errorf("--repo err = %v, want the home directory named as the cause", err)
+	}
+	yes := true
+	var ws string
+	stderr := captureStderr(t, func() { ws, _ = resolveWorkspace(context.Background(), false, false, &yes) })
+	if ws != "" || !strings.Contains(stderr, "no repo access for this mode") {
+		t.Errorf("mode default: workspace %q, stderr %q; want none, with a note", ws, stderr)
 	}
 }

@@ -140,30 +140,62 @@ func plural(n int) string {
 	return "s"
 }
 
+// writeBody writes an answer, or a failure, as a blockquote: every line
+// starts with "> ". Nothing inside a blockquote can be a top-level heading,
+// and Markdown closes any block left open inside it (an unclosed code fence,
+// say) where the quote ends, so model text, or a CLI error quoting it, can
+// never pass for one of so's own sections or swallow the ones after it,
+// whatever Markdown it holds. Only so's own hint stays outside.
 func writeBody(b *strings.Builder, o panel.Opinion) {
 	if o.OK() {
-		b.WriteString(demoteHeadings(strings.TrimSpace(CleanText(o.Output))))
-		b.WriteString("\n")
+		b.WriteString(quote(demoteHeadings(strings.TrimSpace(CleanText(o.Output)))))
 		return
 	}
-	fmt.Fprintf(b, "```\n%s\n```\n", strings.TrimSpace(CleanText(o.Error)))
+	e := strings.TrimSpace(CleanText(o.Error))
+	fence := strings.Repeat("`", max(3, longestRun(e, '`')+1))
+	b.WriteString(quote(fence + "\n" + e + "\n" + fence))
 	if hint := o.ErrorKind.Hint(); hint != "" {
 		fmt.Fprintf(b, "\n%s\n", hint)
 	}
 }
 
+// quote turns s into a Markdown blockquote.
+func quote(s string) string {
+	var b strings.Builder
+	for _, l := range strings.Split(s, "\n") {
+		if l == "" {
+			b.WriteString(">\n")
+		} else {
+			b.WriteString("> " + l + "\n")
+		}
+	}
+	return b.String()
+}
+
+func longestRun(s string, c byte) int {
+	best, n := 0, 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == c {
+			n++
+			best = max(best, n)
+		} else {
+			n = 0
+		}
+	}
+	return best
+}
+
 // demoteHeadings moves a model's markdown headings two levels down, so an
-// answer's "## Verdict" sits under so's own "## Panelist A" or "### Panelist
-// A", and an answer can't pass off a "## Panel synthesis" or "## Panel key"
-// of its own as one of so's sections. Fenced code follows CommonMark's rules
-// (an opening fence of three or more backticks or tildes, indented at most
-// three spaces, closed by a run of the same character at least as long), and
-// a fence left open is closed at the end, so it can't swallow what follows. A
-// setext underline ("Panel key" then "---") gets a blank line before it,
-// which makes it a plain rule.
+// answer's "## Verdict" reads as a subsection of so's "## Panelist A" or
+// "### Panelist A". It is for readability: the blockquote in writeBody is
+// what keeps model text from posing as so's sections. Lines in fenced code
+// (CommonMark's rules: three or more backticks or tildes, indented at most
+// three spaces, closed by a run of the same character at least as long) are
+// left alone, and a setext underline ("Verdict" then "---") gets a blank line
+// before it, which makes it a plain rule.
 func demoteHeadings(s string) string {
 	lines := strings.Split(s, "\n")
-	out := make([]string, 0, len(lines)+1)
+	out := make([]string, 0, len(lines))
 	var fenceChar byte
 	fenceLen := 0
 	prevText := false
@@ -185,9 +217,6 @@ func demoteHeadings(s string) string {
 		}
 		out = append(out, l)
 		prevText = fenceLen == 0 && strings.TrimSpace(l) != "" && !strings.HasPrefix(strings.TrimLeft(l, " "), "#")
-	}
-	if fenceLen > 0 {
-		out = append(out, strings.Repeat(string(fenceChar), fenceLen))
 	}
 	return strings.Join(out, "\n")
 }

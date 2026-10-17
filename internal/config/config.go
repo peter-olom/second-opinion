@@ -98,6 +98,9 @@ func ParseSpec(spec string) (Panelist, error) {
 	if p.Backend == "" {
 		return p, fmt.Errorf("invalid panelist %q: want backend[:model][@effort]", spec)
 	}
+	if strings.HasPrefix(p.Model, "-") {
+		return p, fmt.Errorf("invalid model %q in %q: a model can't start with -", p.Model, spec)
+	}
 	return p, nil
 }
 
@@ -291,6 +294,11 @@ func (c *Config) validate() error {
 	}
 	check := func(where string, pl Panelist) error {
 		for _, x := range append([]Panelist{pl}, pl.Fallback...) {
+			// Model and provider become CLI arguments of their own; one that
+			// starts with - would read as a flag.
+			if strings.HasPrefix(x.Model, "-") || strings.HasPrefix(x.Provider, "-") {
+				return fmt.Errorf("%s: model and provider can't start with - (%q, %q)", where, x.Model, x.Provider)
+			}
 			if x.Effort != "" && !effortLevels[x.Effort] {
 				return fmt.Errorf("%s: unknown effort %q for %s (want one of off, none, minimal, low, medium, high, xhigh, max)", where, x.Effort, x.Backend)
 			}

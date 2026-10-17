@@ -76,7 +76,8 @@ Options: `-p/--profile`, `-m/--mode`, `--diff`, `--base <ref>`, `--repo`, `--no-
 `-f/--file` (repeatable), `-w/--with backend:model@effort` (ad-hoc panelists instead of a profile,
 repeatable; two or more are chaired by `default_chair` if the config sets one, so add `--no-chair`
 to send the request only to the models named), `--no-chair`, `--reveal`, `--format md|json` (use
-`json` if you parse the result; in markdown, each answer's headings sit two levels below `so`'s own),
+`json` if you parse the result; in markdown, each answer is a blockquote, so only lines outside the
+quotes are `so`'s own),
 `--timeout 20m`. Outside a git repository, `--repo` exposes the whole current folder.
 
 Modes: `general` (default), `review` (code review), `plan` (design critique), `debug` (diagnosis),
@@ -96,8 +97,8 @@ when you report the result.
   twice that, and do not start it again while it is still running. A fallback that takes over
   after a usage limit gets the full timeout too, for a panelist or the chair, so a run with
   fallbacks can take three or four times the timeout. If your shell tool caps how long a command
-  can run, start `so ask` in the background (without `-q`): its first stderr line is
-  `so: run <id>`, and `so runs show <id>` prints the answer once that run is done (until then it
+  can run, start `so ask` in the background (without `-q`): it prints a stderr line
+  `so: run <id>` before the panel starts, and `so runs show <id>` prints the answer once that run is done (until then it
   says the run may still be running). Don't use `so runs show last` for this; another run may
   have finished since. A run that is killed outright is not recorded. One that is interrupted
   (Ctrl-C) is saved with whatever had answered.

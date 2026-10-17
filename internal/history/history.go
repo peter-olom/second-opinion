@@ -215,6 +215,28 @@ func ids(dir string) ([]string, error) {
 			ids = append(ids, strings.TrimSuffix(e.Name(), ".json"))
 		}
 	}
-	slices.Sort(ids)
+	// IDs sort by their second, then by a random suffix; runs started in the
+	// same second are ordered by their recorded start time instead.
+	times := map[string]time.Time{}
+	started := func(id string) time.Time {
+		t, ok := times[id]
+		if !ok {
+			if r, err := read(dir, id); err == nil {
+				t = r.Time
+			}
+			times[id] = t
+		}
+		return t
+	}
+	second := func(id string) string { return id[:min(len(id), len(idTimeLayout))] }
+	slices.SortFunc(ids, func(a, b string) int {
+		if c := strings.Compare(second(a), second(b)); c != 0 {
+			return c
+		}
+		if c := started(a).Compare(started(b)); c != 0 {
+			return c
+		}
+		return strings.Compare(a, b)
+	})
 	return ids, nil
 }
