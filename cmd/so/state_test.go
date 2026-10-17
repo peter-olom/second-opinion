@@ -26,7 +26,9 @@ func TestMain(m *testing.M) {
 	}
 	os.Setenv("HOME", filepath.Join(dir, "home"))
 	os.Setenv("USERPROFILE", filepath.Join(dir, "home"))
-	os.Unsetenv("PI_CODING_AGENT_DIR")
+	for _, k := range []string{"PI_CODING_AGENT_DIR", "CODEX_HOME", "CLAUDE_CONFIG_DIR"} {
+		os.Unsetenv(k)
+	}
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)

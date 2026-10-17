@@ -2,6 +2,7 @@ package gitctx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -235,8 +236,31 @@ func TestDiffCancels(t *testing.T) {
 	write(t, dir, "a.go", "package a\n")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := Diff(ctx, dir, "HEAD", ""); err == nil {
-		t.Error("a cancelled context should stop collection")
+	if _, err := Diff(ctx, dir, "HEAD", ""); !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled", err)
+	}
+}
+
+func TestDiffCancelsWhileGitRuns(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell filter")
+	}
+	dir := newRepo(t)
+	write(t, dir, ".gitattributes", "*.slow filter=slow\n")
+	write(t, dir, "a.slow", "one\n")
+	run(t, dir, "add", ".")
+	run(t, dir, "commit", "-q", "-m", "slow")
+	run(t, dir, "config", "filter.slow.clean", "sh -c 'sleep 10; cat'")
+	write(t, dir, "a.slow", "two\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(300*time.Millisecond, cancel)
+	start := time.Now()
+	_, err := Diff(ctx, dir, "HEAD", "")
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled", err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("took %s; cancellation should stop git", d)
 	}
 }
 

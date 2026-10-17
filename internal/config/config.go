@@ -39,6 +39,15 @@ func (p Panelist) Label() string {
 	if p.Name != "" {
 		return p.Name
 	}
+	return p.Display()
+}
+
+// Display is Spec plus the provider, which Spec can't carry, so two pi
+// panelists on different providers stay distinguishable.
+func (p Panelist) Display() string {
+	if p.Provider != "" {
+		return p.Spec() + " (provider " + p.Provider + ")"
+	}
 	return p.Spec()
 }
 
@@ -205,6 +214,10 @@ func decode(data, source string) (*Config, error) {
 		}
 		return nil, fmt.Errorf("%s: unknown keys: %s", source, strings.Join(names, ", "))
 	}
+	// 0 would otherwise read as "left out" and keep runs for 7 days.
+	if md.IsDefined("history_days") && c.HistoryDays == 0 {
+		return nil, fmt.Errorf("%s: history_days = 0 is not allowed; set history = false to keep no runs", source)
+	}
 	return &c, nil
 }
 
@@ -275,6 +288,31 @@ func (c *Config) validate() error {
 	}
 	if _, ok := c.Modes[c.DefaultMode]; !ok {
 		return fmt.Errorf("default_mode %q is not a defined mode", c.DefaultMode)
+	}
+	check := func(where string, pl Panelist) error {
+		for _, x := range append([]Panelist{pl}, pl.Fallback...) {
+			if x.Effort != "" && !effortLevels[x.Effort] {
+				return fmt.Errorf("%s: unknown effort %q for %s (want one of off, none, minimal, low, medium, high, xhigh, max)", where, x.Effort, x.Backend)
+			}
+		}
+		return nil
+	}
+	if c.DefaultChair != nil {
+		if err := check("default_chair", *c.DefaultChair); err != nil {
+			return err
+		}
+	}
+	for name, p := range c.Profiles {
+		for _, pl := range p.Panelists {
+			if err := check(fmt.Sprintf("profile %q", name), pl); err != nil {
+				return err
+			}
+		}
+		if p.Chair != nil {
+			if err := check(fmt.Sprintf("profile %q chair", name), *p.Chair); err != nil {
+				return err
+			}
+		}
 	}
 	if c.DefaultChair != nil {
 		for _, f := range c.DefaultChair.Fallback {

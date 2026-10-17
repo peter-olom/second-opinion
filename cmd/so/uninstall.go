@@ -238,18 +238,20 @@ func planUninstall(cfg string, cfgParentIsLink, all bool) (plan []removal, notes
 	}
 
 	for _, s := range skillDirs {
-		dir := filepath.Join(home, s.dir, "second-opinion")
-		protectTarget(dir)
-		r, note, err := ownedDir(dir, []string{"SKILL.md"}, keep)
-		if err != nil {
-			return nil, nil, err
-		}
-		if note != "" {
-			notes = append(notes, note)
-		}
-		if r != nil {
-			r.what = s.harness + " skill"
-			plan = append(plan, *r)
+		for _, skills := range s.paths(home) {
+			dir := filepath.Join(skills, "second-opinion")
+			protectTarget(dir)
+			r, note, err := ownedDir(dir, []string{"SKILL.md"}, keep)
+			if err != nil {
+				return nil, nil, err
+			}
+			if note != "" {
+				notes = append(notes, note)
+			}
+			if r != nil {
+				r.what = s.harness + " skill"
+				plan = append(plan, *r)
+			}
 		}
 	}
 

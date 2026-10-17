@@ -109,6 +109,20 @@ func fail(err error) int {
 	return 1
 }
 
+// checkSpecs parses backend:model@effort flag values, so a typo is reported
+// as a usage error before anything else runs.
+func checkSpecs(specs ...string) error {
+	for _, spec := range specs {
+		if spec == "" {
+			continue
+		}
+		if _, err := config.ParseSpec(spec); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // usageErr reports a malformed command line.
 func usageErr(err error) int {
 	fmt.Fprintln(os.Stderr, "so:", err)
@@ -183,6 +197,9 @@ func cmdAsk(ctx context.Context, args []string) int {
 	}
 	if *repo && *noRepo {
 		return usageErr(errors.New("use either --repo or --no-repo, not both"))
+	}
+	if err := checkSpecs(append(*with, *chair)...); err != nil {
+		return usageErr(err)
 	}
 
 	cfg, err := config.Load(*cfgPath)
@@ -635,6 +652,9 @@ func cmdDoctor(ctx context.Context, args []string) int {
 		fmt.Fprintln(os.Stderr, "so: refusing to call models from inside a second-opinion panelist.")
 		return 3
 	}
+	if err := checkSpecs(*with...); err != nil {
+		return usageErr(err)
+	}
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
 		return fail(err)
@@ -957,12 +977,28 @@ func oneLine(s string) string {
 }
 
 // skillDirs are the user-level skill directories of the supported harnesses,
-// relative to the home directory. A harness counts as installed if the parent
-// of its skills directory exists.
-var skillDirs = []struct{ harness, dir string }{
-	{"claude", ".claude/skills"},
-	{"codex", ".codex/skills"},
-	{"pi", ".pi/agent/skills"},
+// relative to the home directory, unless the harness's home is moved with
+// env. A harness counts as installed if the parent of its skills directory
+// exists.
+type skillDir struct{ harness, dir, env string }
+
+var skillDirs = []skillDir{
+	{"claude", ".claude/skills", "CLAUDE_CONFIG_DIR"},
+	{"codex", ".codex/skills", "CODEX_HOME"},
+	{"pi", ".pi/agent/skills", "PI_CODING_AGENT_DIR"},
+}
+
+// paths lists where the harness reads skills: its relocated home's skills
+// folder if env names an absolute one, then the default under home. Both
+// are listed so uninstall also finds a skill installed before a move.
+func (s skillDir) paths(home string) []string {
+	def := filepath.Join(home, s.dir)
+	if v := os.Getenv(s.env); filepath.IsAbs(v) {
+		if moved := filepath.Join(v, "skills"); moved != def {
+			return []string{moved, def}
+		}
+	}
+	return []string{def}
 }
 
 func cmdSkill(args []string) int {
@@ -992,17 +1028,18 @@ func cmdSkill(args []string) int {
 	var targets []string
 	if fs.NArg() == 0 {
 		for _, s := range skillDirs {
-			if _, err := os.Stat(filepath.Dir(filepath.Join(home, s.dir))); err == nil {
-				targets = append(targets, filepath.Join(home, s.dir))
+			dir := s.paths(home)[0]
+			if _, err := os.Stat(filepath.Dir(dir)); err == nil {
+				targets = append(targets, dir)
 			}
 		}
 	}
 	for _, name := range fs.Args() {
-		i := slices.IndexFunc(skillDirs, func(s struct{ harness, dir string }) bool { return s.harness == name })
+		i := slices.IndexFunc(skillDirs, func(s skillDir) bool { return s.harness == name })
 		if i < 0 {
-			return fail(fmt.Errorf("unknown harness %q (want claude, codex, or pi; use --dir for others)", name))
+			return usageErr(fmt.Errorf("unknown harness %q (want claude, codex, or pi; use --dir for others)", name))
 		}
-		targets = append(targets, filepath.Join(home, skillDirs[i].dir))
+		targets = append(targets, skillDirs[i].paths(home)[0])
 	}
 	targets = append(targets, *dirs...)
 	if len(targets) == 0 {

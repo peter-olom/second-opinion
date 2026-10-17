@@ -39,6 +39,12 @@ func (p pi) Run(ctx context.Context, req Request) (string, error) {
 	if err := os.WriteFile(appendFile, []byte(req.System+"\n"), 0o600); err != nil {
 		return "", err
 	}
+	// --system-prompt gets the same file treatment: as literal text, a repo
+	// file (or symlink) with that exact name would replace it.
+	baseFile := filepath.Join(req.Dir, "system-prompt.md")
+	if err := os.WriteFile(baseFile, []byte(piBasePrompt+"\n"), 0o600); err != nil {
+		return "", err
+	}
 	args := []string{
 		"--print",
 		"--no-session",
@@ -47,7 +53,7 @@ func (p pi) Run(ctx context.Context, req Request) (string, error) {
 		"--no-prompt-templates",
 		"--no-approve",
 		"--offline", // no startup network operations, such as package installs
-		"--system-prompt", piBasePrompt,
+		"--system-prompt", baseFile,
 		"--append-system-prompt", appendFile,
 	}
 	// Never load AGENTS.md context files: a reviewed repository's could

@@ -16,12 +16,12 @@ import (
 func TestFilterHelperDoesNotOutliveGit(t *testing.T) {
 	dir := newRepo(t)
 	pidFile := filepath.Join(t.TempDir(), "pid")
-	run(t, dir, "config", "filter.slow.clean", "sh -c 'sleep 60 >/dev/null 2>&1 & echo $! > "+pidFile+"; cat'")
 	write(t, dir, ".gitattributes", "*.enc filter=slow\n")
 	write(t, dir, "a.enc", "one\n")
 	run(t, dir, "add", ".")
 	run(t, dir, "commit", "-q", "-m", "enc")
-	os.Remove(pidFile)
+	// Configured only now, so the setup's own git commands start no helper.
+	run(t, dir, "config", "filter.slow.clean", "sh -c 'sleep 60 >/dev/null 2>&1 & echo $! > "+pidFile+"; cat'")
 	write(t, dir, "a.enc", "two\n")
 
 	if _, err := Diff(context.Background(), dir, "HEAD", ""); err != nil {

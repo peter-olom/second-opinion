@@ -74,7 +74,10 @@ so ask -m debug -f logs/crash.txt "Worker deadlocks under load after the change 
 
 Options: `-p/--profile`, `-m/--mode`, `--diff`, `--base <ref>`, `--repo`, `--no-repo`,
 `-f/--file` (repeatable), `-w/--with backend:model@effort` (ad-hoc panelists instead of a profile,
-repeatable), `--no-chair`, `--reveal`, `--format md|json`, `--timeout 20m`.
+repeatable; two or more are chaired by `default_chair` if the config sets one, so add `--no-chair`
+to send the request only to the models named), `--no-chair`, `--reveal`, `--format md|json` (use
+`json` if you parse the result; in markdown, each answer's headings sit two levels below `so`'s own),
+`--timeout 20m`. Outside a git repository, `--repo` exposes the whole current folder.
 
 Modes: `general` (default), `review` (code review), `plan` (design critique), `debug` (diagnosis),
 `audit` (whole-project review). Run `so modes` for the current list, which may include user-defined

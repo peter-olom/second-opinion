@@ -106,9 +106,9 @@ func writeKey(b *strings.Builder, r panel.Result) {
 // default, which so cannot see, so the key says so rather than imply more.
 func keySpec(p config.Panelist) string {
 	if p.Model == "" {
-		return fmt.Sprintf("`%s` (the CLI's default model, not recorded)", p.Spec())
+		return fmt.Sprintf("`%s` (the CLI's default model, not recorded)", p.Display())
 	}
-	return fmt.Sprintf("`%s`", p.Spec())
+	return fmt.Sprintf("`%s`", p.Display())
 }
 
 // status is the parenthetical after a heading: timing, any fallback, and why it failed.
@@ -135,12 +135,50 @@ func plural(n int) string {
 
 func writeBody(b *strings.Builder, o panel.Opinion) {
 	if o.OK() {
-		b.WriteString(strings.TrimSpace(o.Output))
+		b.WriteString(demoteHeadings(strings.TrimSpace(cleanText(o.Output))))
 		b.WriteString("\n")
 		return
 	}
-	fmt.Fprintf(b, "```\n%s\n```\n", strings.TrimSpace(o.Error))
+	fmt.Fprintf(b, "```\n%s\n```\n", strings.TrimSpace(cleanText(o.Error)))
 	if hint := o.ErrorKind.Hint(); hint != "" {
 		fmt.Fprintf(b, "\n%s\n", hint)
 	}
+}
+
+// demoteHeadings moves a model's markdown headings two levels down, so an
+// answer's "## Verdict" sits under so's own "## Panelist A" or "### Panelist
+// A", and an answer can't pass off a "## Panel synthesis" or "## Panel key"
+// of its own as one of so's sections. Fenced code blocks are left alone.
+func demoteHeadings(s string) string {
+	lines := strings.Split(s, "\n")
+	fence := ""
+	for i, l := range lines {
+		t := strings.TrimLeft(l, " ")
+		switch {
+		case fence != "":
+			if strings.HasPrefix(t, fence) {
+				fence = ""
+			}
+		case strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~"):
+			fence = t[:3]
+		case len(l)-len(t) <= 3 && strings.HasPrefix(t, "#"):
+			lines[i] = "##" + t
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// cleanText drops control characters other than newline and tab, so model
+// output or a CLI's error can't move the cursor or rewrite the terminal
+// (escape sequences, carriage returns, C1 controls).
+func cleanText(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return r
+		}
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			return -1
+		}
+		return r
+	}, s)
 }

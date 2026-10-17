@@ -10,10 +10,12 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/peter-olom/second-opinion/internal/backend"
 	"github.com/peter-olom/second-opinion/internal/config"
 	"github.com/peter-olom/second-opinion/internal/history"
+	"github.com/peter-olom/second-opinion/internal/panel"
 )
 
 func TestAskRefusesInsidePanelist(t *testing.T) {
@@ -342,5 +344,74 @@ func TestPiDeveloperRoleProviders(t *testing.T) {
 	write(`{"providers": {"ollama": {"api": "openai-completions", "baseUrl": "http://127.0.0.1:11434/v1", "models": [{"id": "kimi", "reasoning": true, "compat": {"supportsDeveloperRole": false}}]}}}`)
 	if got := piDeveloperRoleProviders(dir); len(got) != 0 {
 		t.Errorf("a model-level fix should not warn: %q", got)
+	}
+}
+
+func TestSkillInstallFollowsAMovedHarnessHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	codexHome := filepath.Join(t.TempDir(), "codex-home")
+	os.MkdirAll(codexHome, 0o755)
+	t.Setenv("CODEX_HOME", codexHome)
+	captureStdout(t, func() {
+		if code := run(context.Background(), []string{"skill", "install", "codex"}); code != 0 {
+			t.Fatalf("install exit code = %d", code)
+		}
+	})
+	if _, err := os.Stat(filepath.Join(codexHome, "skills", "second-opinion", "SKILL.md")); err != nil {
+		t.Errorf("skill not installed under CODEX_HOME: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex")); !os.IsNotExist(err) {
+		t.Errorf("install should not create ~/.codex when CODEX_HOME is set (err %v)", err)
+	}
+	// Uninstall finds it there too.
+	if p := skillDirs[1].paths(home); p[0] != filepath.Join(codexHome, "skills") || len(p) != 2 {
+		t.Errorf("codex skill paths = %v", p)
+	}
+}
+
+func TestInterruptedRunIsRecorded(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script")
+	}
+	unsetEnv(t, backend.EnvGuard)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "fake-pi")
+	script := "#!/bin/sh\nwhile [ $# -gt 0 ]; do [ \"$1\" = --model ] && model=$2; shift; done\ncat >/dev/null\n[ \"$model\" = slow ] && sleep 30\necho \"answer from $model\"\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(dir, "config.toml")
+	os.WriteFile(cfg, []byte(stubOtherBackends+"[backends.pi]\ncommand = \""+fake+"\"\n"), 0o644)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(1500*time.Millisecond, cancel)
+	var code int
+	captureStdout(t, func() {
+		captureStderr(t, func() {
+			code = run(ctx, []string{"ask", "--config", cfg, "--no-repo", "-q", "-w", "pi:fast", "-w", "pi:slow", "--chair", "pi:fast", "q"})
+		})
+	})
+	if code != 130 {
+		t.Errorf("exit code = %d, want 130", code)
+	}
+	recs, err := history.List(history.Dir(), 0)
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("records = %d (%v), want the interrupted run saved", len(recs), err)
+	}
+	res := recs[0].Result
+	var ok, cancelled int
+	for _, o := range res.Opinions {
+		switch {
+		case o.OK():
+			ok++
+		case o.ErrorKind == panel.KindCancelled:
+			cancelled++
+		}
+	}
+	if ok != 1 || cancelled != 1 || res.Synthesis != nil {
+		t.Errorf("saved %d ok, %d cancelled, synthesis %v; want 1, 1, none", ok, cancelled, res.Synthesis != nil)
 	}
 }

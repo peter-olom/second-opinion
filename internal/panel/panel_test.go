@@ -124,14 +124,22 @@ func TestPanelistSystemIncludesModeFormat(t *testing.T) {
 
 func TestSystemPromptsDescribeRepoAccess(t *testing.T) {
 	m := config.Mode{Instructions: "Review the code."}
-	got := PanelistSystem("review", m, Options{Workspace: "/src/app"})
-	if strings.Contains(got, "Do not use tools") || !strings.Contains(got, "repository (/src/app)") {
+	got := PanelistSystem("review", m, Options{Workspace: "/home/alice/src/app"})
+	if strings.Contains(got, "Do not use tools") || !strings.Contains(got, "working directory is the caller's repository") {
 		t.Errorf("panelist prompt should describe repo access:\n%s", got)
 	}
-	if chair := ChairSystem("review", m, Options{Workspace: "/src/app"}); !strings.Contains(chair, "repository (/src/app)") {
+	chair := ChairSystem("review", m, Options{Workspace: "/home/alice/src/app"})
+	if !strings.Contains(chair, "working directory is the caller's repository") {
 		t.Errorf("chair prompt should describe repo access:\n%s", chair)
 	}
-	if chair := ChairSystem("review", m, Options{}); strings.Contains(chair, "repository (") {
+	// The CLIs already run there; the path (with the username) adds nothing.
+	if strings.Contains(got+chair, "alice") {
+		t.Error("the workspace path should not be sent to the models")
+	}
+	if strings.Contains(got, "rather than surveying") {
+		t.Error("the shared preamble must not tell audit panelists to stay narrow")
+	}
+	if chair := ChairSystem("review", m, Options{}); strings.Contains(chair, "caller's repository") {
 		t.Error("chair prompt without a workspace should not mention repo access")
 	}
 }

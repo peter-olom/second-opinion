@@ -65,13 +65,8 @@ func TestLeftoverHelpersAreKilled(t *testing.T) {
 		t.Fatalf("no helper PID recorded (%q)", pid)
 	}
 	time.Sleep(200 * time.Millisecond)
-	if out, _ := os.ReadFile("/proc/" + pid + "/stat"); len(out) > 0 && !strings.Contains(string(out), " Z ") {
+	if alive(atoi(pid)) {
 		t.Errorf("helper %s still running after the CLI exited", pid)
-	}
-	if runtime.GOOS != "linux" { // Linux was checked above; Signal(0) can't tell a zombie there
-		if p, err := os.FindProcess(atoi(pid)); err == nil && p.Signal(nil0()) == nil {
-			t.Errorf("helper %s still running after the CLI exited", pid)
-		}
 	}
 }
 
@@ -246,6 +241,7 @@ func TestPiAppendPromptIsAScratchFile(t *testing.T) {
 	// can stand in for it.
 	repo := t.TempDir()
 	os.WriteFile(filepath.Join(repo, " "), []byte("INJECTED"), 0o644)
+	os.WriteFile(filepath.Join(repo, piBasePrompt), []byte("INJECTED"), 0o644)
 	scratch := t.TempDir()
 	argsFile := filepath.Join(t.TempDir(), "args")
 	cli := script(t, "printf '%s\\n' \"$@\" > "+argsFile+"\ncat >/dev/null\necho ok\n")
@@ -259,6 +255,16 @@ func TestPiAppendPromptIsAScratchFile(t *testing.T) {
 	value := args[i+1]
 	if !filepath.IsAbs(value) || filepath.Dir(value) != scratch {
 		t.Errorf("--append-system-prompt %q should be a file in the scratch folder %s", value, scratch)
+	}
+	// --system-prompt is read as a file the same way.
+	j := slices.Index(args, "--system-prompt")
+	if j < 0 || j+1 >= len(args) {
+		t.Fatalf("no --system-prompt in %q", args)
+	}
+	if base := args[j+1]; !filepath.IsAbs(base) || filepath.Dir(base) != scratch {
+		t.Errorf("--system-prompt %q should be a file in the scratch folder %s", base, scratch)
+	} else if content, _ := os.ReadFile(base); strings.TrimSpace(string(content)) != piBasePrompt {
+		t.Errorf("system prompt file = %q, want the base prompt", content)
 	}
 	if content, err := os.ReadFile(value); err != nil || strings.TrimSpace(string(content)) != "SECRET-MODE-INSTRUCTIONS" {
 		t.Errorf("append file content = %q, %v; want the system prompt", content, err)
@@ -381,7 +387,7 @@ func TestCancelAndTimeoutKillTheCLIAndHelpers(t *testing.T) {
 		if pid <= 0 {
 			t.Fatalf("%s: helper pid not recorded", tc.name)
 		}
-		if p, err := os.FindProcess(pid); err == nil && p.Signal(nil0()) == nil {
+		if alive(pid) {
 			t.Errorf("%s: helper still running", tc.name)
 		}
 	}

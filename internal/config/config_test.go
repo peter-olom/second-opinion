@@ -284,3 +284,26 @@ func TestSeverityModesDefineTheirScale(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadRejectsBadValues(t *testing.T) {
+	for name, tc := range map[string]struct{ toml, want string }{
+		"profile effort":  {"[profiles.p]\npanelists = [{ backend = \"pi\", effort = \"hgih\" }]\n", `unknown effort "hgih"`},
+		"chair effort":    {"[profiles.p]\npanelists = [{ backend = \"pi\" }]\nchair = { backend = \"pi\", effort = \"hgih\" }\n", `profile "p" chair: unknown effort`},
+		"fallback effort": {"[profiles.p]\npanelists = [{ backend = \"pi\", fallback = [{ backend = \"pi\", effort = \"hgih\" }] }]\n", `unknown effort "hgih"`},
+		"default chair":   {"default_chair = { backend = \"pi\", effort = \"hgih\" }\n", `default_chair: unknown effort`},
+		"history_days 0":  {"history_days = 0\n", "history_days = 0 is not allowed"},
+	} {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		if err := os.WriteFile(path, []byte(tc.toml), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want %q", name, err, tc.want)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "config.toml")
+	os.WriteFile(path, []byte("[profiles.p]\npanelists = [{ backend = \"pi\", effort = \"high\" }]\n"), 0o644)
+	if _, err := Load(path); err != nil {
+		t.Errorf("a valid effort was rejected: %v", err)
+	}
+}

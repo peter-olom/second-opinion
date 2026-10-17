@@ -73,6 +73,14 @@ so ask -w claude:opus@high -w pi:ollama/kimi-k2.7-code:cloud@high "..."   # ad-h
 so ask -p panel --format json "..."                                        # machine-readable
 ```
 
+An ad-hoc `--with` panel of two or more models is chaired by `default_chair` if your config sets
+one (or `--chair`), and the chair receives the whole request and every answer. Add `--no-chair` to
+send the request only to the models you named.
+
+In markdown output, each answer's own headings are moved two levels down, so a model's text can't
+pass for one of `so`'s sections (`## Panel synthesis`, `## Panel key`), and terminal control
+characters are removed. Use `--format json` when a program reads the result.
+
 The result goes to stdout. Progress goes to stderr when stderr is a terminal, or with `-v`. If some
 panelists fail, the run still succeeds with the ones that answered. Exit codes: 0 when at least
 one panelist answered, 1 when every panelist failed or on any other error (a bad config, an unknown
@@ -168,7 +176,8 @@ The caller always writes the prompt. There are two ways to give the panel more c
   repository that isn't rooted at your home directory (a dotfiles repo in `~` doesn't count).
   `--repo` turns it on for any mode and `--no-repo` turns it off. Inside a home-rooted repository,
   `--repo` gives the panel the current folder rather than all of `$HOME`, and refuses in `$HOME`
-  itself.
+  itself. Outside any git repository, `--repo` gives the panel the current folder, with no
+  `.gitignore` to leave anything out.
 
 Attachments are wrapped in tags with a random per-run suffix (`<file-3f9a… path="…">`), so an
 attached file can't close its own block and pose as another file.

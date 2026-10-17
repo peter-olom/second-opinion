@@ -426,12 +426,26 @@ func TestUsageErrorsExit2(t *testing.T) {
 		{"--repo", "--no-repo"},
 		{"-p", "x", "-w", "pi:x"},
 		{"--timeout", "-1s"},
+		{"-w", "pi:x@hgih"},
+		{"-w", "pi:a", "-w", "pi:b", "--chair", "pi:c@hgih"},
 	} {
 		argv := append(append([]string{"ask", "--config", fakePiConfig(t)}, args...), "q")
 		captureStderr(t, func() {
 			if code := run(context.Background(), argv); code != 2 {
 				t.Errorf("%v: exit code = %d, want 2", args, code)
 			}
+		})
+	}
+	for _, argv := range [][]string{
+		{"doctor", "--config", fakePiConfig(t), "-w", "pi:x@hgih"},
+		{"skill", "install", "vim"},
+	} {
+		captureStderr(t, func() {
+			captureStdout(t, func() {
+				if code := run(context.Background(), argv); code != 2 {
+					t.Errorf("%v: exit code = %d, want 2", argv, code)
+				}
+			})
 		})
 	}
 }

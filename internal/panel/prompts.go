@@ -19,7 +19,7 @@ const panelistPreamble = `You are one member of a panel giving an independent se
 
 const noAccess = `- Answer only from the request. Do not use tools, run commands, or read files, even if some are available to you: you have no access to the caller's files, repository, or conversation, and everything you need is in the request. If something important is missing, say what it is and state the assumptions you are making instead of refusing.`
 
-const repoAccess = `- Your working directory is the caller's repository (%s), and you have read-only tools to search and read it. Use them to verify claims and to read the code around what the request points to: callers, definitions, types, and tests. Stay focused on the request rather than surveying the whole codebase. You cannot modify anything, and you are not given the caller's conversation beyond the request.`
+const repoAccess = `- Your working directory is the caller's repository, and you have read-only tools to search and read it. Use them to verify claims and to read the code around what the request points to: callers, definitions, types, and tests. Read as widely as the request needs: around a change for a review, across the project for an audit. You cannot modify anything, and you are not given the caller's conversation beyond the request.`
 
 const panelistAnonymous = `
 - The panel is anonymous, so that your response is judged only on its content. Do not say which model you are or which company made you.`
@@ -36,7 +36,7 @@ const chairAnonymous = `
 - Panelists are anonymous. Their letters are assigned at random for each run. Judge every response only on its content, do not guess which model wrote it, and do not say which model you are.`
 
 const chairRepoAccess = `
-- Your working directory is the caller's repository (%s), and you have read-only tools to search and read it. Check disputed or doubtful claims against the code before ruling on them.`
+- Your working directory is the caller's repository, and you have read-only tools to search and read it. Check disputed or doubtful claims against the code before ruling on them.`
 
 // Options are the facts about a run that the system prompts describe.
 type Options struct {
@@ -65,7 +65,7 @@ Concrete next steps for the caller.`
 func PanelistSystem(modeName string, m config.Mode, o Options) string {
 	access := noAccess
 	if o.Workspace != "" {
-		access = fmt.Sprintf(repoAccess, o.Workspace)
+		access = repoAccess
 	}
 	anon := ""
 	if o.Anonymous {
@@ -85,7 +85,7 @@ func ChairSystem(modeName string, m config.Mode, o Options) string {
 		anon = chairAnonymous
 	}
 	if o.Workspace != "" {
-		access = fmt.Sprintf(chairRepoAccess, o.Workspace)
+		access = chairRepoAccess
 	}
 	return compose(fmt.Sprintf(chairPreamble, anon, access), modeName, m.ChairInstructions, format)
 }
