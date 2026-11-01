@@ -139,6 +139,9 @@ when you report the result.
 - Weigh the answer, don't just follow it. Panelists lack your context and can be confidently
   wrong. Check their claims against the actual code before acting.
 - Tell the user what the panel said, where you agree or disagree and why, and what you will do now.
+- For `review` and `audit`, stop when no blockers or majors remain. Don't fix minors or re-run the
+  panel for them unless the user asks. Re-run only to check a blocker or major fix, and only on
+  that fix. Pass Optional items on to the user; don't act on them.
 
 ## First run: set up profiles
 

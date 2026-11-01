@@ -398,10 +398,10 @@ Modes ship inside the binary (`internal/assets/modes.toml`) and update with it:
 | mode | for | repo access |
 |---|---|---|
 | `general` | questions, decisions, ideas | no |
-| `review` | code review: verdict, severity-ranked findings (R1…) with failure scenario, evidence and fix, then test gaps, questions and coverage. The chair merges these into confirmed or plausible findings (F1…), lists rejected findings, and ends with a next-steps checklist | yes |
+| `review` | code review: approve or request changes, blockers and majors (R1…) with failure scenario, evidence and fix, a short list of optional minors, then test gaps tied to the blockers and majors, questions and coverage. The chair merges these into confirmed or plausible findings (F1…), lists rejected findings, and ends with a next-steps checklist for blockers and majors, or tells the caller to stop if there are none | yes |
 | `plan` | critique of a design or plan before building it | no |
 | `debug` | ranked root-cause hypotheses with how to confirm each one | yes |
-| `audit` | whole-project audit: what leaves the machine, promises the code doesn't keep, risky paths, untested code. Same findings structure as `review` | yes |
+| `audit` | whole-project audit: what leaves the machine, promises the code doesn't keep, risky paths. Same findings structure as `review` | yes |
 
 A mode has `instructions` and a `format` for panelists, plus optional `chair_instructions` and
 `chair_format` for the chair, and `repo` for default repository access. To customise a mode,

@@ -284,7 +284,7 @@ func TestSeverityModesDefineTheirScale(t *testing.T) {
 			continue
 		}
 		checked++
-		for _, want := range []string{"blocker:", "major:", "minor:", "nit:", "Verdict: approve if"} {
+		for _, want := range []string{"blocker:", "major:", "minor:", "Verdict: approve if"} {
 			if !strings.Contains(m.Instructions, want) {
 				t.Errorf("mode %s asks for severities but its instructions lack %q", name, want)
 			}

@@ -45,12 +45,14 @@ Look for, in priority order:
 3. Data: loss, corruption, unsafe migrations, incompatible changes to stored formats.
 4. Contracts: breaking changes to APIs, CLIs, config, or behavior that callers rely on.
 5. Reliability and performance: failure handling, retries, timeouts, unbounded work or memory, hot-path regressions.
-6. Tests: missing or wrong coverage for the behavior that changed.
+6. Tests: missing or wrong coverage tied to a blocker or major.
 7. Maintainability: only where it is likely to cause bugs later.
 
 Rules:
 - Stay on the change. Raise a pre-existing problem only if the change depends on it or makes
   it worse, and label it pre-existing.
+- Report something only if it has a realistic failure worth the cost of fixing. Do not report
+  nits. A clean result is a good result, so do not pad.
 - Every finding needs a concrete failure scenario. If you cannot say how it fails, it is a
   question, not a finding.
 - If you can read the repository, check callers, definitions, and tests before reporting, and
@@ -60,21 +62,19 @@ Rules:
   - major: a likely bug on a reachable path, a breaking contract change, or a significant
     reliability or performance risk. Should fix before merging.
   - minor: a real issue with limited impact, or a maintainability problem likely to cause bugs.
-  - nit: optional polish. Report at most three.
 - Confidence: high = verified in the code; medium = strong inference from what you saw;
   low = a suspicion you could not verify.
-- Verdict: approve if nothing is above nit; approve with fixes if the worst finding is minor;
-  request changes if there is any blocker or major.
+- Verdict: approve if there is no blocker or major; request changes if there is any.
 - No praise, and no style comments a linter or formatter would catch.
 """
 format = """
 ## Verdict
-**approve** | **approve with fixes** | **request changes**
+**approve** | **request changes**
 
 One or two sentences: what you understand the change to do, and the main reason for your verdict.
 
 ## Findings
-Numbered R1, R2, … most severe first. Write "None." if there are none.
+Blockers and majors only, numbered R1, R2, … most severe first. Write "None." if there are none.
 
 ### R1 · severity · category · confidence: high|medium|low: Short title
 - **Location:** `path:line` and the function or symbol
@@ -85,8 +85,11 @@ Numbered R1, R2, … most severe first. Write "None." if there are none.
 
 Category is one of: correctness, security, data, contract, reliability, performance, tests, maintainability.
 
+## Optional
+Minors, one line each, at most three, the most valuable first. These don't require action. "None." if there are none.
+
 ## Test gaps
-Tests that are missing or wrong for the changed behavior, each with what it should assert. "None." if coverage is adequate.
+Tests that are missing or wrong and tied to a blocker or major, each with what it should assert. "None." if there are none.
 
 ## Questions
 Assumptions you made and things you could not verify, phrased so the caller can answer or check them. "None." if there are none.
@@ -102,23 +105,25 @@ Consolidate the panel's reviews into one review the caller can act on.
 - Validate every finding before keeping it. If you can read the repository, check it in the
   code. Mark it confirmed if you verified it, or plausible if it is credible but you could not
   verify it. Move findings that do not hold up to Rejected, with the reason.
-- Re-calibrate severity on the panel's scale (blocker, major, minor, nit) and say when you
-  changed a panelist's rating.
+- Reject or downgrade anything with no realistic failure worth the cost of fixing. Leave out
+  minors that fail this test, including inflated ones.
+- Re-calibrate severity on the panel's scale (blocker, major, minor) and say when you
+  changed a panelist's rating. A finding downgraded to minor moves to Optional.
 - Rank by impact, not by how many panelists raised something. One panelist can be right.
-- Derive the verdict from the merged findings with the panel's rule: any blocker or major
-  means request changes.
+- Derive the verdict from the merged findings: approve if there is no blocker or major, request
+  changes if there is any.
 """
 chair_format = """
 ## Verdict
-**approve** | **approve with fixes** | **request changes**
+**approve** | **request changes**
 
 One or two sentences on why.
 
 Panel: one line per panelist with its verdict and the findings behind it, e.g.
-`Panelist B: request changes (R1, R3)`.
+`Panelist B: request changes (R1, R3)` or `Panelist A: approve`.
 
 ## Findings
-Merged and renumbered F1, F2, … most severe first. Write "None." if there are none.
+Blockers and majors only, merged and renumbered F1, F2, … most severe first. Write "None." if there are none.
 
 ### F1 · severity · category · confirmed|plausible: Short title
 - **Location:** `path:line` and the function or symbol
@@ -130,14 +135,17 @@ Merged and renumbered F1, F2, … most severe first. Write "None." if there are 
 ## Rejected
 One line per rejected finding: panelist label and ID, title, and why it does not hold. "None." if nothing was rejected.
 
+## Optional
+Minors merged from the panel, including findings you downgraded, one line each and the most valuable first. Keep it short. These don't require action. "None." if there are none.
+
 ## Test gaps
-Merged from the panel. "None." if there are none.
+Merged from the panel, only those tied to a blocker or major. "None." if there are none.
 
 ## Open questions
-Only questions that affect whether or how to fix something. "None." if there are none.
+Only questions that affect whether or how to fix a blocker or major. "None." if there are none.
 
 ## Next steps
-An ordered checklist for the caller: findings to fix, tests to add, and questions to resolve.
+An ordered checklist for the caller: blockers and majors to fix, and the tests tied to them. Leave out Optional items and re-runs of the panel. If there are no blockers or majors, write only "Stop: no blockers or majors."
 """
 
 [modes.audit]
@@ -156,9 +164,12 @@ Look for, in priority order:
 3. Security: injection, path handling, symlinks, permissions, untrusted input, and sandboxing.
 4. Resource and process safety: unbounded memory or time, cancellation, cleanup of subprocesses and
    temporary files.
-5. Correctness of the core paths, and their tests: what is untested, and which tests cannot fail.
+5. Correctness of the core paths, and their tests where a gap is tied to a blocker or major: what is
+   untested, and which tests cannot fail.
 
 Rules:
+- Report something only if it has a realistic failure worth the cost of fixing. Do not report
+  nits. A clean result is a good result, so do not pad.
 - Each finding needs evidence from the code (file:line) and a concrete scenario where it goes wrong.
 - If the caller lists known issues, confirm or correct them briefly and spend your effort on the
   ones not listed.
@@ -167,20 +178,18 @@ Rules:
   - major: a likely bug on a reachable path, a broken promise users rely on, or a significant
     reliability or performance risk. Should fix before release.
   - minor: a real issue with limited impact, or a maintainability problem likely to cause bugs.
-  - nit: optional polish. Report at most three.
 - Confidence: high = verified in the code; medium = strong inference from what you saw;
   low = a suspicion you could not verify.
-- Verdict: approve if nothing is above nit; approve with fixes if the worst finding is minor;
-  request changes if there is any blocker or major.
+- Verdict: approve if there is no blocker or major; request changes if there is any.
 """
 format = """
 ## Verdict
-**approve** | **approve with fixes** | **request changes**
+**approve** | **request changes**
 
 One or two sentences: what you understand the project to do, and the main reason for your verdict.
 
 ## Findings
-Numbered R1, R2, … most severe first. Write "None." if there are none.
+Blockers and majors only, numbered R1, R2, … most severe first. Write "None." if there are none.
 
 ### R1 · severity · category · confidence: high|medium|low: Short title
 - **Location:** `path:line` and the function or symbol
@@ -191,8 +200,11 @@ Numbered R1, R2, … most severe first. Write "None." if there are none.
 
 Category is one of: correctness, security, data, contract, reliability, performance, tests, maintainability.
 
+## Optional
+Minors, one line each, at most three, the most valuable first. These don't require action. "None." if there are none.
+
 ## Test gaps
-Tests that are missing or wrong for the project's core paths, each with what it should assert. "None." if coverage is adequate.
+Tests that are missing or wrong and tied to a blocker or major, each with what it should assert. "None." if there are none.
 
 ## Questions
 Assumptions you made and things you could not verify, phrased so the caller can answer or check them. "None." if there are none.
@@ -203,20 +215,22 @@ One line: what you reviewed, and anything relevant you did not get to.
 chair_instructions = """
 Merge the panel's audit findings into one list, validating each against the code. Keep confirmed
 and plausible findings, reject the ones that don't hold up, and re-rate severity on the panel's
-scale. Rank by impact. Derive the verdict from the merged findings: any blocker or major means
-request changes.
+scale (blocker, major, minor), saying when you changed a rating. Reject or downgrade anything with
+no realistic failure worth the cost of fixing, and leave out minors that fail this test, including
+inflated ones. A finding downgraded to minor moves to Optional. Rank by impact. Derive the verdict
+from the merged findings: approve if there is no blocker or major, request changes if there is any.
 """
 chair_format = """
 ## Verdict
-**approve** | **approve with fixes** | **request changes**
+**approve** | **request changes**
 
 One or two sentences on why.
 
 Panel: one line per panelist with its verdict and the findings behind it, e.g.
-`Panelist B: request changes (R1, R3)`.
+`Panelist B: request changes (R1, R3)` or `Panelist A: approve`.
 
 ## Findings
-Merged and renumbered F1, F2, … most severe first. Write "None." if there are none.
+Blockers and majors only, merged and renumbered F1, F2, … most severe first. Write "None." if there are none.
 
 ### F1 · severity · category · confirmed|plausible: Short title
 - **Location:** `path:line` and the function or symbol
@@ -228,14 +242,17 @@ Merged and renumbered F1, F2, … most severe first. Write "None." if there are 
 ## Rejected
 One line per rejected finding: panelist label and ID, title, and why it does not hold. "None." if nothing was rejected.
 
+## Optional
+Minors merged from the panel, including findings you downgraded, one line each and the most valuable first. Keep it short. These don't require action. "None." if there are none.
+
 ## Test gaps
-Merged from the panel. "None." if there are none.
+Merged from the panel, only those tied to a blocker or major. "None." if there are none.
 
 ## Open questions
-Only questions that affect whether or how to fix something. "None." if there are none.
+Only questions that affect whether or how to fix a blocker or major. "None." if there are none.
 
 ## Next steps
-An ordered checklist for the caller: findings to fix, tests to add, and questions to resolve.
+An ordered checklist for the caller: blockers and majors to fix, and the tests tied to them. Leave out Optional items and re-runs of the panel. If there are no blockers or majors, write only "Stop: no blockers or majors."
 """
 
 [modes.plan]
