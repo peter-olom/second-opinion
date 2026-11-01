@@ -124,6 +124,8 @@ when you report the result.
   - `timeout`: retry with a longer `--timeout` or lower effort.
   - `context`: the prompt is too long for the model; attach less.
   - `cancelled`: the run was interrupted; run it again if you still need the answer.
+  - `unusable`: the model's whole answer was a tool call written as text, so it doesn't count as a
+    response. Retry, or suggest replacing the model if it keeps happening.
 - `so` refuses to run from inside a panelist, to stop accidental recursion.
 
 ## Using the answer

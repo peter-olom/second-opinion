@@ -276,6 +276,9 @@ func (r *Runner) call(ctx context.Context, pl config.Panelist, system, prompt, w
 	if err == nil && strings.TrimSpace(out) == "" {
 		err = errors.New("empty response")
 	}
+	if err == nil {
+		err = checkAnswer(out)
+	}
 	return out, err
 }
 

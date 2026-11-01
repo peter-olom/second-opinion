@@ -3,6 +3,7 @@ package panel
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -19,11 +20,12 @@ const (
 	KindModel     ErrorKind = "model"     // unknown, retired, or unsupported model
 	KindTimeout   ErrorKind = "timeout"   // exceeded the per-model timeout
 	KindCancelled ErrorKind = "cancelled" // the run was interrupted
+	KindUnusable  ErrorKind = "unusable"  // the CLI succeeded, but what the model wrote is not an answer
 	KindOther     ErrorKind = "other"
 )
 
 // Kinds lists every kind; keep it next to the constants above.
-var Kinds = []ErrorKind{KindContext, KindQuota, KindAuth, KindModel, KindTimeout, KindCancelled, KindOther}
+var Kinds = []ErrorKind{KindContext, KindQuota, KindAuth, KindModel, KindTimeout, KindCancelled, KindUnusable, KindOther}
 
 // The CLIs report failures as free text, so classification matches common
 // phrasings and HTTP status codes. Order matters:
@@ -52,6 +54,8 @@ func classify(err error) ErrorKind {
 		return KindTimeout
 	case errors.Is(err, context.Canceled):
 		return KindCancelled
+	case errors.Is(err, errUnusable):
+		return KindUnusable
 	}
 	// The first line is so's own "<cli>: exit status N"; the last is usually
 	// the CLI's real error. Lines in between are often transcript (code,
@@ -84,6 +88,45 @@ func match(s string) ErrorKind {
 	return KindOther
 }
 
+// errUnusable marks an answer that isn't one. Being a typed error, the model
+// text quoted after it can't be taken for a usage limit or a login failure.
+var errUnusable = errors.New("no usable answer")
+
+// toolCallOnly matches an answer that is nothing but tool-call markup written
+// as text, in the shape models have been seen to produce (any namespace, or
+// none):
+//
+//	<atem:function_calls>
+//	<atem:invoke name="ls.read">
+//	<atem:parameter name="path">.</atem:parameter>
+//	</atem:invoke>
+//	</atem:function_calls>
+//
+// There is no better signal: a real tool call reaches the CLI as one and runs,
+// but this is plain text to it, so it exits 0 and prints the text as the answer.
+// The match covers the whole answer and allows only white space between tags,
+// so an answer with any prose around such a block, or with the block in a code
+// fence, is not matched: a wrongly rejected answer is worse than a stray one.
+// A value can't contain "</", so it can't stretch over the tags and prose
+// between two blocks.
+var toolCallOnly = regexp.MustCompile(strings.ReplaceAll(
+	`^(?:<NSfunction_calls>\s*`+
+		`(?:<NSinvoke name="[^"\n]*">\s*`+
+		`(?:<NSparameter name="[^"\n]*">(?:[^<]|<[^/])*</NSparameter>\s*)*`+
+		`</NSinvoke>\s*)+`+
+		`</NSfunction_calls>\s*)+$`,
+	"NS", `(?:[\w-]+:)?`))
+
+// checkAnswer returns an error if text is not an answer at all.
+func checkAnswer(text string) error {
+	text = strings.TrimSpace(text)
+	if !toolCallOnly.MatchString(text) {
+		return nil
+	}
+	// Kept in the error, and so in the run history, for diagnosis.
+	return fmt.Errorf("%w: the whole answer was a tool call written as text, which nothing ran:\n%s", errUnusable, clip(text, 500))
+}
+
 // Hint is what the caller should do about a failure of this kind.
 func (k ErrorKind) Hint() string {
 	switch k {
@@ -99,6 +142,8 @@ func (k ErrorKind) Hint() string {
 		return "The model did not finish in time. Retry with a longer --timeout or a lower effort."
 	case KindCancelled:
 		return "The run was interrupted before this model answered. Run it again if you still need its answer."
+	case KindUnusable:
+		return "The model returned a tool call written as text instead of an answer. Retry, or if it keeps happening, replace this model in the profile."
 	}
 	return ""
 }

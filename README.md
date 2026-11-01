@@ -128,6 +128,7 @@ except `other`:
 | `timeout` | did not finish within `--timeout` | longer timeout or lower effort |
 | `context` | the prompt is too long for the model | attach less: a narrower `--base`, fewer `-f` files |
 | `cancelled` | the run was interrupted (Ctrl-C, terminal closed) | run it again |
+| `unusable` | the model's whole answer was a tool call written as text, so it doesn't count as a response | retry, or replace the model if it keeps happening |
 
 The CLIs report errors as free text, so `so` sorts them by matching common phrasings and HTTP status
 codes. Anything it doesn't recognise is `other`. When a fallback answers, the output says so
